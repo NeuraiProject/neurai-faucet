@@ -1,0 +1,37 @@
+extends layout
+
+block content
+	div.row
+
+		div.hidden-xs.hidden-sm.col-md-4
+
+			include inc/leftcol
+		
+		div.col-xs-12.col-md-4
+
+			include inc/centercol
+
+		div.col-xs-12.hidden-md.hidden-xl.hidden-lg
+
+			include inc/leftcol
+
+		div.hidden-xs.hidden-sm.col-md-4
+
+			include inc/leftcolwallets
+		
+		div.col-xs-12.col-md-12
+			
+			center.div.well
+
+				div.payouts
+					
+					h1!= h1
+
+					if !success && faucet_text.length > 0
+						p!= faucet_text
+
+					include inc/form
+
+		div.col-xs-12.hidden-md.hidden-xl.hidden-lg
+
+			include inc/leftcolwallets
