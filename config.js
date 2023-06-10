@@ -54,16 +54,16 @@
 	wallet_explorer_auth - Auth key for walletexplorer.net if you wish to report coin data (walletexplorer helps the community keep their wallets up to date by tracking what versions are in use by public services)
 ****************************/
 module.exports = {
-	'theme': "darkly"
+	'theme': "pulse"
 	,'stylesheet': ""
-	,'title': "Radiant Faucet"
-	,'brand': "RXD Faucet"
-	,'copyright': '<a href="https://radiantblockchain.org">Radiant</a>'
-	,'coin': "Radiant"
-	,'symbol': "RXD"
+	,'title': "Neurai Faucet"
+	,'brand': "XNA Faucet"
+	,'copyright': '<a href="https://neurai.org">Neurai</a>'
+	,'coin': "Neurai"
+	,'symbol': "XNA"
 	,'pages':{
 		'home':{
-			'faucet_text':'<h5>This faucet has been created for testing purposes. Please, do not abuse it.<br/><br/><br/>-------------------<br/>Enter your Radiant address below to receive free RXD.<br/></h5>'
+			'faucet_text':'<h5>This faucet has been created for testing purposes. Please, do not abuse it.<br/><br/><br/>-------------------<br/>Enter your Neurai address below to receive free XNA.<br/></h5>'
 			,'payout_header':'Faucet Wallet'
 		}
 	}
@@ -72,7 +72,7 @@ module.exports = {
 	,'show_wallet_balance': true
 	,'rpc':{
 		'host':"localhost"
-		,'port':7332
+		,'port':19001
 		,'user':"user"
 		,'pass':"pass"
 		,'timeout':30000
