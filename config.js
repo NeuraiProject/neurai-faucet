@@ -54,7 +54,7 @@
 	wallet_explorer_auth - Auth key for walletexplorer.net if you wish to report coin data (walletexplorer helps the community keep their wallets up to date by tracking what versions are in use by public services)
 ****************************/
 module.exports = {
-	'theme': "pulse"
+	'theme': "darkly"
 	,'stylesheet': ""
 	,'title': "Neurai Faucet"
 	,'brand': "XNA Faucet"

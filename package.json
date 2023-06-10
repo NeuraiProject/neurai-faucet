@@ -1,5 +1,5 @@
 {
-    "name": "radiantfaucet-node",
+    "name": "neuraifaucet-node",
     "version": "1.0.0",
     "private": true,
     "dependencies": {
