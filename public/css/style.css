@@ -1,9 +1,14 @@
 .navbar-default {
 	background-color: rgb(109, 8, 168);
 	}
-	
 h1 {
-
+	color: #9434db!important;;
+	}	
+h4 {
+	color: #9434db!important;;
+}
+h5 {
+	color: #e6daef!important;;
 }
 .midcol,.dashboard {
 	text-align:center;
@@ -47,4 +52,7 @@ h1 {
 }
 .coin-address {
    color: green;
+}
+p {
+    color: #d9afff!important;;
 }

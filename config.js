@@ -81,10 +81,10 @@ module.exports = {
 		,'account':'faucet'
 	}
 	,'faucet':{
-		'immediate':false
+		'immediate':true
 		,'interval':720 //720 = 12 hours
-		,'user_limit':10
-		,'payout':0.001
+		,'user_limit':2
+		,'payout':0.01
 	},
 
 	'webServer': {

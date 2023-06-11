@@ -1,11 +1,11 @@
-Radiant Faucet
+Neurai Faucet
 =================
 
 What is it?
 ----
 Fully customizable Faucet built on NodeJS, Express 3, and Bootstrap.
 
-Based on original code from [cryptofaucet-node](https://github.com/clapyohands/cryptofaucet-node)
+Based on original code from [cryptofaucet-node](https://github.com/clapyohands/cryptofaucet-node) and Antares version in [radiant-faucet](https://github.com/Antares-RXD/radiant-faucet)
 
 Configuration
 ----
@@ -31,7 +31,7 @@ Or with *systemd* (Linux only):
 
 ```
 [Unit]
-Description=Radiant Faucet Daemon
+Description=Neurai Faucet Daemon
 After=network.target
 
 [Service]
