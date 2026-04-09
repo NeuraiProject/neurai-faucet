@@ -43,13 +43,13 @@ export const sendFaucetFunds = async (toAddress: string) => {
   console.log(`Faucet Wallet Address: ${fromAddress}`);
 
   // 1. Get confirmed UTXOs
-  const confirmedUtxos: any[] = await rpc('getaddressutxos', [{ addresses: [fromAddress] }]) || [];
+  const confirmedUtxos: any[] = (await rpc('getaddressutxos', [{ addresses: [fromAddress] }]) as any) || [];
 
   // 2. Get unconfirmed (mempool) deltas for the faucet address
   //    Mempool entries: positive satoshis = incoming UTXO, negative = spent UTXO
   let mempoolEntries: any[] = [];
   try {
-    mempoolEntries = await rpc('getaddressmempool', [{ addresses: [fromAddress] }]) || [];
+    mempoolEntries = (await rpc('getaddressmempool', [{ addresses: [fromAddress] }]) as any) || [];
   } catch (e) {
     console.warn('getaddressmempool not available, ignoring mempool:', e);
   }

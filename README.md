@@ -41,6 +41,7 @@ A beautiful and lightweight faucet for Neurai (XNA) Testnet or Mainnet. Built wi
    - `MAX_QUEUE_SIZE`: Maximum concurrent claims queued before returning 503 (default: `50`).
    - `MNEMONIC`: The 12-word mnemonic of the wallet that holds the faucet funds.
    - `FRONTEND_PORT`: External port to expose the faucet (default: `80`).
+   - `ALLOWED_HOST`: Your domain name (e.g. `faucet.example.org`). Leave empty to allow all hosts.
    - `PUBLIC_TURNSTILE_SITE_KEY`: (Optional) Cloudflare Turnstile Site Key.
    - `TURNSTILE_SECRET_KEY`: (Optional) Cloudflare Turnstile Secret Key.
 
