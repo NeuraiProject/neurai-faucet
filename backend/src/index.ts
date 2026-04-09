@@ -73,7 +73,9 @@ async function processQueue() {
     } catch (err: any) {
       // Roll back the rate-limit lock so the user can try again
       await rollbackRateLimit(job.ip, job.address).catch(() => {});
-      job.reject(err instanceof Error ? err : new Error(String(err)));
+      const errMsg = err instanceof Error ? err.stack : JSON.stringify(err, null, 2);
+      console.error('sendFaucetFunds raw error:', errMsg);
+      job.reject(err instanceof Error ? err : new Error(errMsg ?? String(err)));
     }
   }
   processing = false;
@@ -185,7 +187,7 @@ app.post('/api/claim', async (req, res) => {
         res.json({ success: true, message: 'Funds sent successfully!', txid });
       },
       reject: (err) => {
-        console.error('Queue job error:', err.message);
+        console.error('Queue job error:', err instanceof Error ? err.stack : JSON.stringify(err));
         res.status(500).json({ error: 'An internal error occurred. Please try again later.' });
       }
     });

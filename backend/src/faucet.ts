@@ -12,6 +12,7 @@ const RPC_URL = NETWORK === 'mainnet'
   ? (process.env.RPC_URL_MAINNET || '')
   : (process.env.RPC_URL_TESTNET || '');
 const FAUCET_AMOUNT = Number(process.env.FAUCET_AMOUNT || 100);
+const COINBASE_MATURITY = Number(process.env.COINBASE_MATURITY || 10);
 
 // Map network to library format
 const libNetwork = NETWORK === 'mainnet' ? 'xna' : 'xna-test';
@@ -43,7 +44,14 @@ export const sendFaucetFunds = async (toAddress: string) => {
   console.log(`Faucet Wallet Address: ${fromAddress}`);
 
   // 1. Get confirmed UTXOs
-  const confirmedUtxos: any[] = (await rpc('getaddressutxos', [{ addresses: [fromAddress] }]) as any) || [];
+  const allConfirmedUtxos: any[] = (await rpc('getaddressutxos', [{ addresses: [fromAddress] }]) as any) || [];
+
+  // Filter out immature coinbase UTXOs (need COINBASE_MATURITY confirmations)
+  const currentHeight: number = (await rpc('getblockcount', []) as any) || 0;
+  const confirmedUtxos = allConfirmedUtxos.filter(
+    (u: any) => (currentHeight - u.height) >= COINBASE_MATURITY
+  );
+  console.log(`UTXOs: ${allConfirmedUtxos.length} total, ${confirmedUtxos.length} mature (height=${currentHeight}, maturity=${COINBASE_MATURITY})`);
 
   // 2. Get unconfirmed (mempool) deltas for the faucet address
   //    Mempool entries: positive satoshis = incoming UTXO, negative = spent UTXO
@@ -91,38 +99,77 @@ export const sendFaucetFunds = async (toAddress: string) => {
   );
 
   // Combine confirmed + unspent mempool incoming
-  const inputs = [...availableConfirmed, ...availableMempool];
+  const allAvailable = [...availableConfirmed, ...availableMempool];
 
-  if (inputs.length === 0) {
+  if (allAvailable.length === 0) {
     throw new Error('Faucet has no funds (no UTXOs found, including mempool).');
   }
 
-  // 2. Calculate total spendable balance
-  let totalSats = 0n;
-  for (const i of inputs) totalSats += BigInt(i.satoshis);
-
+  const FEE_RATE = 10000n; // sat per byte (×10 to account for unsigned vs signed tx size difference)
   const amountSats = BigInt(FAUCET_AMOUNT) * 100000000n;
-  const feeSats = 1000000n;
 
-  if (totalSats < amountSats + feeSats) {
+  // Helper: build an unsigned test tx to measure real byte size
+  const buildTestTx = (selectedInputs: any[], fee: bigint) => {
+    const sel = selectedInputs.reduce((acc: bigint, u: any) => acc + BigInt(u.satoshis), 0n);
+    const change = sel - amountSats - fee;
+    const payments: { address: string; valueSats: bigint }[] = [{ address: toAddress, valueSats: amountSats }];
+    if (change > 0n) payments.push({ address: fromAddress, valueSats: change });
+    return createPaymentTransaction({
+      inputs: selectedInputs.map((i: any) => ({ txid: i.txid, vout: i.vout })),
+      payments
+    });
+  };
+
+  // Coin selection: start with the smallest UTXO that looks sufficient,
+  // build the actual tx, measure real size + 10% buffer, recalculate fee.
+  // If still not enough, add the next largest UTXO and repeat.
+  const bySmallest = [...allAvailable].sort((a: any, b: any) => Number(BigInt(a.satoshis) - BigInt(b.satoshis)));
+  const byLargest  = [...allAvailable].sort((a: any, b: any) => Number(BigInt(b.satoshis) - BigInt(a.satoshis)));
+
+  // Rough estimate to find a starting candidate
+  const estFee = FEE_RATE * 300n; // ~300 bytes for 1-input tx, conservative
+  const candidate = bySmallest.find((u: any) => BigInt(u.satoshis) >= amountSats + estFee);
+  let inputs: any[] = candidate ? [candidate] : [byLargest[0]];
+
+  let feeSats = 0n;
+  let selectedSats = 0n;
+
+  for (let attempt = 0; attempt < allAvailable.length; attempt++) {
+    selectedSats = inputs.reduce((acc: bigint, u: any) => acc + BigInt(u.satoshis), 0n);
+
+    // Build tx with fee=0 to measure real size (output count is the same)
+    const testTx = buildTestTx(inputs, 0n);
+    const realBytes = BigInt(testTx.rawTx.length / 2);
+    const bytesWithBuffer = realBytes * 11n / 10n; // +10% buffer
+    feeSats = bytesWithBuffer * FEE_RATE;
+
+    if (selectedSats >= amountSats + feeSats) break;
+
+    // Not enough — add the largest unused UTXO
+    const used = new Set(inputs.map((u: any) => `${u.txid}:${u.vout}`));
+    const next = byLargest.find((u: any) => !used.has(`${u.txid}:${u.vout}`));
+    if (!next) break;
+    inputs.push(next);
+  }
+
+  if (selectedSats < amountSats + feeSats) {
     throw new Error('Faucet has insufficient funds for this request.');
   }
 
-  const changeSats = totalSats - amountSats - feeSats;
+  const changeSats = selectedSats - amountSats - feeSats;
+  console.log(`Coin selection: ${inputs.length} inputs, fee=${feeSats} sat (${Number(feeSats)/1e8} XNA), change=${changeSats} sat`);
 
-  // 3. Create raw transaction
-  const payments = [
+  // 3. Create final transaction with correct change
+  const payments: { address: string; valueSats: bigint }[] = [
     { address: toAddress, valueSats: amountSats }
   ];
-
-  // Add change output back to the faucet address
   if (changeSats > 0n) {
     payments.push({ address: fromAddress, valueSats: changeSats });
   }
 
   const builtTx = createPaymentTransaction({
     inputs: inputs.map((i: any) => ({ txid: i.txid, vout: i.vout })),
-    payments: payments.map(p => ({ address: p.address, valueSats: p.valueSats }))
+    payments
   });
 
   // 4. Sign transaction
