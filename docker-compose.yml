@@ -1,0 +1,46 @@
+services:
+  db:
+    image: redis:7-alpine
+    container_name: neurai-faucet-redis
+    restart: unless-stopped
+    # Removed ports to hide DB from external access
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
+
+  backend:
+    build: 
+      context: ./backend
+    container_name: neurai-faucet-backend
+    restart: unless-stopped
+    # Removed ports to hide backend from external access
+    environment:
+      - REDIS_URL=redis://db:6379
+    env_file:
+      - .env
+    depends_on:
+      - db
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: neurai-faucet-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-54321}:4321"
+    environment:
+      - PUBLIC_BACKEND_URL=http://backend:3000/api
+    env_file:
+      - .env
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  redis_data:

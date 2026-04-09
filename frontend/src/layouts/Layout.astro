@@ -1,0 +1,98 @@
+---
+interface Props {
+	title: string;
+	network?: string;
+}
+
+const { title, network = 'Testnet' } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en" data-theme="light">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="description" content="Neurai Faucet - Get free XNA for testing on Testnet or Mainnet" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<link rel="icon" type="image/png" href="/logo.png" />
+		<meta name="generator" content={Astro.generator} />
+		<title>{title}</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+	</head>
+	<body>
+		<slot />
+	</body>
+</html>
+
+<style is:global>
+	:root {
+		--bg:            #f4f4f6;
+		--bg-inner:      #ffffff;
+		--navbar-bg:     #ffffff;
+		--card-bg:       #ffffff;
+		--card-border:   #e5e7eb;
+		--card-shadow:   0 2px 8px rgba(0,0,0,0.06);
+		--text-main:     #111827;
+		--text-label:    #6b7280;
+		--text-muted:    #9ca3af;
+		--input-bg:      #f9fafb;
+		--input-border:  #d1d5db;
+		--divider:       #e5e7eb;
+		--orange:        #f97316;
+		--orange-hover:  #ea6c10;
+		--orange-light:  #fff7ed;
+		--orange-border: #fed7aa;
+		--success-bg:    #d1fae5;
+		--success-color: #065f46;
+		--error-bg:      #fee2e2;
+		--error-color:   #991b1b;
+		--radius-card:   16px;
+		--radius-inner:  10px;
+	}
+
+	[data-theme="dark"] {
+		--bg:            #111827;
+		--bg-inner:      #1f2937;
+		--navbar-bg:     #1f2937;
+		--card-bg:       #1f2937;
+		--card-border:   #374151;
+		--card-shadow:   0 2px 8px rgba(0,0,0,0.3);
+		--text-main:     #f9fafb;
+		--text-label:    #9ca3af;
+		--text-muted:    #6b7280;
+		--input-bg:      #111827;
+		--input-border:  #374151;
+		--divider:       #374151;
+		--orange-light:  rgba(249,115,22,0.12);
+		--orange-border: rgba(249,115,22,0.35);
+	}
+
+	*, *::before, *::after {
+		box-sizing: border-box;
+		margin: 0;
+		padding: 0;
+	}
+
+	html {
+		font-family: 'Inter', system-ui, -apple-system, sans-serif;
+		background-color: var(--bg);
+		color: var(--text-main);
+		min-height: 100vh;
+		transition: background-color 0.25s, color 0.25s;
+	}
+
+	body {
+		min-height: 100vh;
+		display: flex;
+		flex-direction: column;
+	}
+</style>
+
+<script is:inline>
+	// Apply saved theme before first paint to avoid flash
+	(function() {
+		const saved = localStorage.getItem('theme') || 'light';
+		document.documentElement.setAttribute('data-theme', saved);
+	})();
+</script>

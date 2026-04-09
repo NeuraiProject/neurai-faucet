@@ -1,50 +1,60 @@
-Neurai Faucet
-=================
+# Neurai Faucet
 
-What is it?
-----
-Fully customizable Faucet built on NodeJS, Express 3, and Bootstrap.
+A beautiful and lightweight faucet for Neurai (XNA) Testnet or Mainnet. Built with Astro, Node.js, and Redis.
 
-Based on original code from [cryptofaucet-node](https://github.com/clapyohands/cryptofaucet-node) and Antares version in [radiant-faucet](https://github.com/Antares-RXD/radiant-faucet)
+## Features
 
-Configuration
-----
-Set global configuration options in config.js 
+- **Multi-network**: Supports both Mainnet and Testnet.
+- **Modern UI**: Clean, responsive, light-purple design built with Astro.
+- **Anti-Abuse**:
+  - Rate limiting by IP and Address using Redis (with automatic expiration).
+  - Optional Cloudflare Turnstile (Captcha) integration.
+- **Lightweight**: Uses Redis for state, no heavy databases required.
+- **Docker Ready**: Easy deployment with Docker Compose.
 
-Installation
-----
+## Prerequisites
 
-    npm install
-    
-This will install all the necessary dependencies
-    
-Run
-----
+- Docker and Docker Compose.
+- A Neurai RPC node address (Mainnet or Testnet).
+- A 12-word mnemonic for your faucet wallet.
 
-    node app.js
-    
-Or using [forever](https://www.npmjs.com/package/forever):
+## Setup
 
-    forever start app.js
+1. **Clone the repository**:
+   ```bash
+   git clone <repo-url>
+   cd neurai-faucet
+   ```
 
-Or with *systemd* (Linux only):
+2. **Configure environment variables**:
+   Copy `.env.example` to `.env` and fill in your details.
+   ```bash
+   cp .env.example .env
+   ```
 
-```
-[Unit]
-Description=Neurai Faucet Daemon
-After=network.target
+   **Key settings in `.env`**:
+   - `NETWORK`: `testnet` or `mainnet` — selects which RPC URL to use.
+   - `RPC_URL_TESTNET`: Neurai Testnet RPC endpoint.
+   - `RPC_URL_MAINNET`: Neurai Mainnet RPC endpoint.
+   - `FAUCET_AMOUNT`: Amount of XNA to send per request.
+   - `WAIT_TIME_HOURS`: Hours a user must wait before requesting again (`0` disables rate limiting).
+   - `MAX_QUEUE_SIZE`: Maximum concurrent claims queued before returning 503 (default: `50`).
+   - `MNEMONIC`: The 12-word mnemonic of the wallet that holds the faucet funds.
+   - `FRONTEND_PORT`: External port to expose the faucet (default: `80`).
+   - `PUBLIC_TURNSTILE_SITE_KEY`: (Optional) Cloudflare Turnstile Site Key.
+   - `TURNSTILE_SECRET_KEY`: (Optional) Cloudflare Turnstile Secret Key.
 
-[Service]
-WorkingDirectory=/PATH_TO_FAUCET
-User=root
-Group=root
-Type=simple
-ExecStart=node /PATH_TO_FAUCET/app.js
-Restart=on-failure
-RestartSec=5s
-PrivateTmp=true
+3. **Deploy with Docker Compose**:
+   ```bash
+   docker compose up -d
+   ```
 
-[Install]
-WantedBy=multi-user.target
+## Architecture
 
-```
+- **Frontend**: Astro (SSR) on the port defined by `FRONTEND_PORT` (default: `80`), mapped to internal port `4321`.
+- **Backend**: Node.js/TypeScript API on port `3000` (internal only, not exposed).
+- **Database**: Redis for tracking IP/Address requests with TTL-based expiration.
+
+## License
+
+Apache License 2.0. See `LICENSE` for details.

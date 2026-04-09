@@ -1,0 +1,646 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Neurai Faucet">
+
+  <!-- NAVBAR -->
+  <nav class="navbar">
+    <div class="navbar-left">
+      <img src="/logo.png" alt="Neurai Logo" class="nav-logo" />
+      <div class="nav-title-group">
+        <span class="nav-eyebrow">FAUCET</span>
+        <span class="nav-title">Neurai Faucet</span>
+      </div>
+    </div>
+    <div class="navbar-right">
+      <div class="network-pill">
+        <span id="status-dot" class="dot"></span>
+        <span id="network-label">Testnet</span>
+      </div>
+      <button id="theme-toggle" class="icon-btn" title="Toggle theme" aria-label="Toggle dark/light mode">
+        <svg id="icon-moon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        <svg id="icon-sun" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+      </button>
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <main class="page-content">
+
+    <!-- TOP ROW: Balance + Receiving Address -->
+    <div class="top-row">
+
+      <!-- Balance Card -->
+      <div class="card balance-card">
+        <div class="balance-header">
+          <p class="card-label">FAUCET BALANCE</p>
+          <span class="xna-badge">XNA</span>
+        </div>
+        <span id="faucet-balance" class="balance-big">—</span>
+      </div>
+
+      <!-- Receiving Address Card -->
+      <div class="card address-card">
+        <p class="card-label">FAUCET ADDRESS</p>
+        <div class="address-row">
+          <code id="faucet-address" class="address-code">Loading…</code>
+          <button id="copy-btn" class="copy-btn" title="Copy address">Copy</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- FAUCET FORM CARD -->
+    <div class="card form-card">
+      <p class="card-label">CLAIM</p>
+      <h2 class="form-title">Request XNA</h2>
+      <p class="form-subtitle">Enter your Neurai address to receive free XNA tokens.</p>
+
+      <form id="faucet-form">
+        <div class="input-group">
+          <label for="address">Your Neurai Address</label>
+          <input
+            type="text"
+            id="address"
+            name="address"
+            placeholder="Address here"
+            required
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+
+        <div id="captcha-wrapper" class="captcha-wrapper" style="display:none">
+          <div id="cf-turnstile-container"></div>
+        </div>
+
+        <button type="submit" id="submit-btn">
+          <span class="btn-text">Get XNA</span>
+          <div class="loader hidden"></div>
+        </button>
+      </form>
+
+      <div id="message" class="message hidden"></div>
+    </div>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="site-footer">
+    <p>© 2026 Neurai · <a href="https://neurai.org" target="_blank" rel="noopener">neurai.org</a></p>
+  </footer>
+
+</Layout>
+
+
+<script>
+  // ── Theme toggle ────────────────────────────────────────────────
+  const themeToggle = document.getElementById('theme-toggle') as HTMLButtonElement;
+  const iconMoon = document.getElementById('icon-moon') as SVGElement;
+  const iconSun  = document.getElementById('icon-sun')  as SVGElement;
+
+  function applyTheme(theme: string) {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+    if (theme === 'dark') {
+      iconMoon.style.display = 'none';
+      iconSun.style.display  = 'block';
+    } else {
+      iconMoon.style.display = 'block';
+      iconSun.style.display  = 'none';
+    }
+  }
+
+  // Sync icon with current theme on load
+  applyTheme(localStorage.getItem('theme') || 'light');
+
+  themeToggle.addEventListener('click', () => {
+    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    applyTheme(current === 'dark' ? 'light' : 'dark');
+  });
+
+  let turnstileLoaded = false;
+  let currentSiteKey: string | null = null;
+
+  function loadTurnstile(siteKey: string) {
+    if (currentSiteKey === siteKey) return; // already loaded with same key
+    currentSiteKey = siteKey;
+    const wrapper = document.getElementById('captcha-wrapper') as HTMLElement;
+    const container = document.getElementById('cf-turnstile-container') as HTMLElement;
+    wrapper.style.display = 'flex';
+    if (!turnstileLoaded) {
+      turnstileLoaded = true;
+      const script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+      script.async = true;
+      script.defer = true;
+      script.onload = () => {
+        (window as any).turnstile.render(container, { sitekey: siteKey });
+      };
+      document.head.appendChild(script);
+    } else {
+      (window as any).turnstile?.render(container, { sitekey: siteKey });
+    }
+  }
+
+  function hideTurnstile() {
+    const wrapper = document.getElementById('captcha-wrapper') as HTMLElement;
+    wrapper.style.display = 'none';
+    currentSiteKey = null;
+  }  const faucetAddrEl    = document.getElementById('faucet-address') as HTMLElement;
+  const faucetBalanceEl = document.getElementById('faucet-balance') as HTMLElement;
+  const networkLabel    = document.getElementById('network-label')  as HTMLElement;
+  const statusDot       = document.getElementById('status-dot')     as HTMLElement;
+  const copyBtn         = document.getElementById('copy-btn')        as HTMLButtonElement;
+  const submitBtn_rpc   = document.getElementById('submit-btn')      as HTMLButtonElement;
+
+  function setRpcStatus(online: boolean) {
+    statusDot.style.background = online ? '#22c55e' : '#ef4444';
+    statusDot.title = online ? 'RPC connected' : 'RPC unreachable';
+    submitBtn_rpc.disabled = !online;
+    submitBtn_rpc.title = online ? '' : 'RPC unreachable — try again later';
+  }
+
+  async function updateFaucetInfo() {
+    try {
+      const res = await fetch('/api/info');
+      if (res.ok) {
+        const data = await res.json();
+        setRpcStatus(true);
+        faucetAddrEl.textContent    = data.address;
+        faucetBalanceEl.textContent = data.balance.toFixed(2);
+        if (data.network) {
+          networkLabel.textContent =
+            data.network === 'mainnet' ? 'Mainnet' : 'Testnet';
+        }
+        if (data.turnstile) {
+          loadTurnstile(data.turnstile);
+        } else {
+          hideTurnstile();
+        }
+      } else {
+        setRpcStatus(false);
+      }
+    } catch (err) {
+      setRpcStatus(false);
+      console.error('Error fetching faucet info:', err);
+    }
+  }
+
+  updateFaucetInfo();
+  setInterval(updateFaucetInfo, 5000);
+
+  // Copy address
+  copyBtn.addEventListener('click', () => {
+    const text = faucetAddrEl.textContent || '';
+    navigator.clipboard.writeText(text).then(() => {
+      const orig = copyBtn.textContent;
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = orig; }, 2000);
+    });
+  });
+
+  // ── Form submission ──────────────────────────────────────────────
+  const form      = document.getElementById('faucet-form')  as HTMLFormElement;
+  const submitBtn = document.getElementById('submit-btn')    as HTMLButtonElement;
+  const btnText   = submitBtn.querySelector('.btn-text')     as HTMLElement;
+  const loader    = submitBtn.querySelector('.loader')       as HTMLElement;
+  const messageEl = document.getElementById('message')       as HTMLElement;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const address = (document.getElementById('address') as HTMLInputElement).value;
+    const captchaToken = (document.querySelector('[name="cf-turnstile-response"]') as HTMLInputElement | null)?.value || undefined;
+
+    submitBtn.disabled = true;
+    btnText.classList.add('hidden');
+    loader.classList.remove('hidden');
+    messageEl.classList.add('hidden');
+
+    try {
+      const res = await fetch('/api/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address, captchaToken }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        messageEl.className = 'message success';
+        messageEl.innerHTML = data.message;
+        if (data.txid) {
+          messageEl.innerHTML += `<small>TXID: ${data.txid}</small>`;
+        }
+      } else {
+        messageEl.className = 'message error';
+        messageEl.textContent = data.error || 'Something went wrong';
+      }
+    } catch {
+      messageEl.className = 'message error';
+      messageEl.textContent = 'Connection error. Is the backend running?';
+    } finally {
+      submitBtn.disabled = false;
+      btnText.classList.remove('hidden');
+      loader.classList.add('hidden');
+      messageEl.classList.remove('hidden');
+      if ((window as any).turnstile) (window as any).turnstile.reset();
+    }
+  });
+</script>
+
+<style>
+  /* ── Layout ─────────────────────────────────────────────────── */
+  .navbar {
+    background: var(--navbar-bg);
+    border-bottom: 1px solid var(--card-border);
+    padding: 0 2rem;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    transition: background 0.25s, border-color 0.25s;
+  }
+
+  .navbar-left {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .nav-logo {
+    width: 40px;
+    height: 40px;
+    object-fit: contain;
+    border-radius: 50%;
+  }
+
+  .nav-title-group {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.1;
+  }
+
+  .nav-eyebrow {
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--text-label);
+    text-transform: uppercase;
+  }
+
+  .nav-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-main);
+  }
+
+  .navbar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .network-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--input-bg);
+    border: 1px solid var(--card-border);
+    padding: 0.35rem 0.85rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-main);
+  }
+
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #22c55e;
+    flex-shrink: 0;
+  }
+
+  .icon-btn {
+    background: var(--input-bg);
+    border: 1px solid var(--card-border);
+    color: var(--text-label);
+    border-radius: 8px;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+  }
+
+  .icon-btn:hover {
+    background: var(--card-border);
+    color: var(--text-main);
+  }
+
+  /* ── Page Content ────────────────────────────────────────────── */
+  .page-content {
+    flex: 1;
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  /* ── Cards ───────────────────────────────────────────────────── */
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--card-shadow);
+    padding: 1.5rem 1.75rem;
+    transition: background 0.25s, border-color 0.25s;
+  }
+
+  .card-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-label);
+    margin-bottom: 0.6rem;
+  }
+
+  /* ── Top Row ─────────────────────────────────────────────────── */
+  .top-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 1.25rem;
+  }
+
+  /* Balance */
+  .balance-card {
+    background: var(--orange-light);
+    border-color: var(--orange-border);
+    container-type: inline-size;
+    overflow: hidden;
+    padding: 0;          /* remove default padding — we control it per zone */
+  }
+
+  .balance-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 0 0.75rem;
+    margin: 0 1.75rem;
+    border-bottom: 1px solid var(--orange-border);
+  }
+
+  .balance-header .card-label {
+    margin-bottom: 0;
+  }
+
+  .xna-badge {
+    background: var(--orange);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.25rem 0.65rem;
+    border-radius: 0 0 8px 8px;   /* flush to top border of card */
+    letter-spacing: 0.05em;
+    align-self: flex-start;
+    margin-top: -1rem;             /* pull up to card top edge */
+    box-shadow: 0 2px 6px rgba(249,115,22,0.25);
+  }
+
+  .balance-big {
+    display: block;
+    font-size: clamp(1.6rem, 6cqi, 2.8rem);
+    font-weight: 700;
+    color: var(--text-main);
+    line-height: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0.9rem 1.75rem 1.25rem;
+  }
+
+  /* Address */
+  .address-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .address-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: var(--radius-inner);
+    padding: 0.75rem 1rem;
+    flex-wrap: wrap;
+  }
+
+  .address-code {
+    flex: 1;
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 0.9rem;
+    color: var(--text-main);
+    word-break: break-all;
+    min-width: 0;
+  }
+
+  .copy-btn {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    color: var(--text-main);
+    font-size: 0.82rem;
+    font-weight: 600;
+    padding: 0.35rem 0.9rem;
+    border-radius: 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+    height: auto;
+  }
+
+  .copy-btn:hover {
+    background: var(--card-border);
+  }
+
+  /* ── Form Card ───────────────────────────────────────────────── */
+  .form-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.3rem;
+  }
+
+  .form-subtitle {
+    font-size: 0.9rem;
+    color: var(--text-label);
+    margin-bottom: 1.5rem;
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  .input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-main);
+  }
+
+  input[type="text"] {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: var(--radius-inner);
+    font-size: 1rem;
+    font-family: inherit;
+    color: var(--text-main);
+    transition: border-color 0.2s;
+  }
+
+  input[type="text"]:focus {
+    outline: none;
+    border-color: var(--orange);
+  }
+
+  input[type="text"]::placeholder {
+    color: var(--text-muted);
+  }
+
+  .captcha-wrapper {
+    display: flex;
+    justify-content: center;
+  }
+
+  button[type="submit"] {
+    background: var(--orange);
+    color: #ffffff;
+    border: none;
+    padding: 0.9rem 1.5rem;
+    border-radius: var(--radius-inner);
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    height: 3.2rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: background 0.2s, transform 0.1s;
+  }
+
+  button[type="submit"]:hover {
+    background: var(--orange-hover);
+  }
+
+  button[type="submit"]:active {
+    transform: scale(0.98);
+  }
+
+  button[type="submit"]:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+  }
+
+  /* ── Messages ────────────────────────────────────────────────── */
+  .message {
+    margin-top: 1rem;
+    padding: 0.9rem 1rem;
+    border-radius: var(--radius-inner);
+    font-size: 0.9rem;
+    font-weight: 600;
+    word-break: break-all;
+    overflow-wrap: break-word;
+  }
+
+  .message small {
+    display: block;
+    margin-top: 0.4rem;
+    font-weight: 400;
+    font-size: 0.75rem;
+    opacity: 0.8;
+  }
+
+  .message.success {
+    background: var(--success-bg);
+    color:      var(--success-color);
+  }
+
+  .message.error {
+    background: var(--error-bg);
+    color:      var(--error-color);
+  }
+
+  .hidden { display: none; }
+
+  /* ── Loader ──────────────────────────────────────────────────── */
+  .loader {
+    width: 22px;
+    height: 22px;
+    border: 3px solid rgba(255,255,255,0.35);
+    border-radius: 50%;
+    border-top-color: #fff;
+    animation: spin 0.85s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Footer ──────────────────────────────────────────────────── */
+  .site-footer {
+    text-align: center;
+    padding: 1.25rem 1rem;
+    border-top: 1px solid var(--divider);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    background: var(--navbar-bg);
+    transition: background 0.25s, border-color 0.25s;
+  }
+
+  .site-footer a {
+    color: var(--orange);
+    text-decoration: none;
+  }
+
+  .site-footer a:hover { text-decoration: underline; }
+
+  /* ── Responsive ──────────────────────────────────────────────── */
+  @media (max-width: 640px) {
+    .navbar {
+      padding: 0 1rem;
+    }
+
+    .top-row {
+      grid-template-columns: 1fr;
+    }
+
+    .balance-big {
+      font-size: clamp(1.2rem, 8vw, 2rem);
+    }
+
+    .page-content {
+      padding: 1.25rem 1rem;
+    }
+  }
+</style>
