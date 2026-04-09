@@ -79,6 +79,7 @@ import Layout from '../layouts/Layout.astro';
           <span class="btn-text">Get XNA</span>
           <div class="loader hidden"></div>
         </button>
+        <p class="claim-amount">You will receive <strong id="claim-amount-value">…</strong> XNA</p>
       </form>
 
       <div id="message" class="message hidden"></div>
@@ -170,6 +171,10 @@ import Layout from '../layouts/Layout.astro';
         setRpcStatus(true);
         faucetAddrEl.textContent    = data.address;
         faucetBalanceEl.textContent = data.balance.toFixed(2);
+        if (data.amount !== undefined) {
+          const amountEl = document.getElementById('claim-amount-value');
+          if (amountEl) amountEl.textContent = data.amount;
+        }
         if (data.network) {
           networkLabel.textContent =
             data.network === 'mainnet' ? 'Mainnet' : 'Testnet';
@@ -533,6 +538,17 @@ import Layout from '../layouts/Layout.astro';
   .captcha-wrapper {
     display: flex;
     justify-content: center;
+  }
+
+  .claim-amount {
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+  }
+
+  .claim-amount strong {
+    color: var(--orange);
   }
 
   button[type="submit"] {

@@ -49,6 +49,20 @@ A beautiful and lightweight faucet for Neurai (XNA) Testnet or Mainnet. Built wi
    docker compose up -d
    ```
 
+## NGIX Configuration
+   ```
+location / {
+    proxy_pass         http://%ip%:54321;
+    proxy_http_version 1.1;
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Real-IP         $remote_addr;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_set_header   Upgrade           $http_upgrade;
+    proxy_set_header   Connection        "upgrade";
+}
+   ```
+
 ## Architecture
 
 - **Frontend**: Astro (SSR) on the port defined by `FRONTEND_PORT` (default: `80`), mapped to internal port `4321`.
