@@ -1,9 +1,5 @@
 import { defineConfig } from 'astro/config';
 import node from '@astrojs/node';
-import { loadEnv } from 'vite';
-
-const env = loadEnv(process.env.NODE_ENV || 'production', process.cwd() + '/..', '');
-const allowedHost = env.ALLOWED_HOST;
 
 // https://astro.build/config
 export default defineConfig({
@@ -17,7 +13,7 @@ export default defineConfig({
   },
   vite: {
     server: {
-      allowedHosts: allowedHost ? [allowedHost] : 'all'
+      allowedHosts: 'all'
     }
   }
 });
