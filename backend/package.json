@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@neuraiproject/neurai-create-transaction": "0.1.3",
-    "@neuraiproject/neurai-key": "^3.0.0",
+    "@neuraiproject/neurai-key": "^3.0.1",
     "@neuraiproject/neurai-rpc": "^0.4.7",
     "@neuraiproject/neurai-sign-transaction": "^1.2.0",
     "cors": "^2.8.5",
