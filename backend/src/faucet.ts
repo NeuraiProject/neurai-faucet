@@ -1,4 +1,4 @@
-import NeuraiKey from '@neuraiproject/neurai-key';
+import NeuraiKey, { type IAddressObject, type IPQAddressObject } from '@neuraiproject/neurai-key';
 import { createPaymentTransaction, encodeDestinationScript } from '@neuraiproject/neurai-create-transaction';
 import Signer from '@neuraiproject/neurai-sign-transaction';
 import { getRPC } from '@neuraiproject/neurai-rpc';
@@ -11,26 +11,80 @@ const NETWORK = (process.env.NETWORK || 'testnet') as 'mainnet' | 'testnet';
 const RPC_URL = NETWORK === 'mainnet'
   ? (process.env.RPC_URL_MAINNET || '')
   : (process.env.RPC_URL_TESTNET || '');
+const FAUCET_WALLET_TYPE = (process.env.FAUCET_WALLET_TYPE || 'legacy').toLowerCase();
 const FAUCET_AMOUNT = Number(process.env.FAUCET_AMOUNT || 100);
 const COINBASE_MATURITY = Number(process.env.COINBASE_MATURITY || 10);
 
-// Map network to library format
-const libNetwork = NETWORK === 'mainnet' ? 'xna' : 'xna-test';
+type ChainNetwork = 'mainnet' | 'testnet';
+type FaucetWalletType = 'legacy' | 'pq';
+type LegacyNetwork = 'xna' | 'xna-test';
+type PQNetwork = 'xna-pq' | 'xna-pq-test';
+type SignerNetwork = LegacyNetwork | PQNetwork;
+type FaucetWallet = IAddressObject | IPQAddressObject;
+
+const networkByType: Record<ChainNetwork, { legacy: LegacyNetwork; pq: PQNetwork }> = {
+  mainnet: {
+    legacy: 'xna',
+    pq: 'xna-pq'
+  },
+  testnet: {
+    legacy: 'xna-test',
+    pq: 'xna-pq-test'
+  }
+};
+
+function getConfiguredWalletType(): FaucetWalletType {
+  if (FAUCET_WALLET_TYPE === 'legacy' || FAUCET_WALLET_TYPE === 'pq') {
+    return FAUCET_WALLET_TYPE;
+  }
+
+  throw new Error(`Unsupported FAUCET_WALLET_TYPE "${FAUCET_WALLET_TYPE}". Use "legacy" or "pq".`);
+}
+
+function getWalletNetwork(): SignerNetwork {
+  return networkByType[NETWORK][getConfiguredWalletType()];
+}
+
+function isPQWallet(wallet: FaucetWallet): wallet is IPQAddressObject {
+  return 'seedKey' in wallet;
+}
+
+function getSignerKeyMap(wallet: FaucetWallet): Record<string, string | {
+  seedKey: string;
+  authType: 0x01;
+  witnessScript: string;
+}> {
+  if (isPQWallet(wallet)) {
+    return {
+      [wallet.address]: {
+        seedKey: wallet.seedKey,
+        authType: wallet.authType,
+        witnessScript: wallet.witnessScript
+      }
+    };
+  }
+
+  return { [wallet.address]: wallet.WIF };
+}
 
 const rpc = getRPC('user', 'pass', RPC_URL);
 
 /**
  * Derives the faucet address and private key from the mnemonic
  */
-export const getFaucetWallet = () => {
+export const getFaucetWallet = (): FaucetWallet => {
   try {
-    const hdKey = NeuraiKey.getHDKey(libNetwork as any, MNEMONIC);
-    const coinType = NeuraiKey.getCoinType(libNetwork as any);
-    const addressObj = NeuraiKey.getAddressByPath(libNetwork as any, hdKey, `m/44'/${coinType}'/0'/0/0`);
-    return addressObj;
+    const walletType = getConfiguredWalletType();
+
+    if (walletType === 'pq') {
+      return NeuraiKey.getPQAddress(getWalletNetwork() as PQNetwork, MNEMONIC, 0, 0);
+    }
+
+    const legacyNetwork = getWalletNetwork() as LegacyNetwork;
+    return NeuraiKey.getAddressPair(legacyNetwork, MNEMONIC, 0, 0).external;
   } catch (error) {
     console.error('Error deriving faucet wallet:', error);
-    throw new Error('Could not derive faucet wallet. Check your MNEMONIC.');
+    throw new Error('Could not derive faucet wallet. Check your MNEMONIC and FAUCET_WALLET_TYPE.');
   }
 };
 
@@ -174,7 +228,7 @@ export const sendFaucetFunds = async (toAddress: string) => {
 
   // 4. Sign transaction
   const signedTxHex = Signer.sign(
-    libNetwork as any,
+    getWalletNetwork(),
     builtTx.rawTx,
     inputs.map((i: any) => ({
       address: fromAddress,
@@ -185,7 +239,7 @@ export const sendFaucetFunds = async (toAddress: string) => {
       satoshis: i.satoshis,
       value: i.satoshis / 100000000
     })),
-    { [fromAddress]: wallet.WIF }
+    getSignerKeyMap(wallet)
   );
 
   // 5. Broadcast transaction

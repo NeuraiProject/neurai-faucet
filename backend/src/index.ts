@@ -9,6 +9,10 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const NETWORK = (process.env.NETWORK || 'testnet') as 'mainnet' | 'testnet';
+const ALLOWED_DESTINATION_NETWORKS = NETWORK === 'mainnet'
+  ? new Set(['xna', 'xna-pq'])
+  : new Set(['xna-test', 'xna-pq-test']);
 
 // ── Security middleware ──────────────────────────────────────────
 app.use(cors({ origin: false }));
@@ -150,7 +154,12 @@ app.post('/api/claim', async (req, res) => {
   try {
     // ── Gate 4: address format ──
     try {
-      decodeAddress(address);
+      const destination = decodeAddress(address);
+      if (!ALLOWED_DESTINATION_NETWORKS.has(destination.network)) {
+        return res.status(400).json({
+          error: `Address network mismatch. This faucet is running on ${NETWORK}.`
+        });
+      }
     } catch {
       return res.status(400).json({ error: 'Invalid Neurai address' });
     }

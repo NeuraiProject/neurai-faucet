@@ -33,16 +33,23 @@ A beautiful and lightweight faucet for Neurai (XNA) Testnet or Mainnet. Built wi
    ```
 
    **Key settings in `.env`**:
-   - `NETWORK`: `testnet` or `mainnet` — selects which RPC URL to use.
+   - `NETWORK`: `testnet` or `mainnet` — selects which RPC URL to use and which recipient address networks are accepted.
    - `RPC_URL_TESTNET`: Neurai Testnet RPC endpoint.
    - `RPC_URL_MAINNET`: Neurai Mainnet RPC endpoint.
    - `FAUCET_AMOUNT`: Amount of XNA to send per request.
    - `WAIT_TIME_HOURS`: Hours a user must wait before requesting again (`0` disables rate limiting).
    - `MAX_QUEUE_SIZE`: Maximum concurrent claims queued before returning 503 (default: `50`).
    - `MNEMONIC`: The 12-word mnemonic of the wallet that holds the faucet funds.
+   - `FAUCET_WALLET_TYPE`: `legacy` or `pq` — how to derive the faucet funding wallet from the mnemonic.
    - `FRONTEND_PORT`: External port to expose the faucet (default: `80`).
    - `PUBLIC_TURNSTILE_SITE_KEY`: (Optional) Cloudflare Turnstile Site Key.
    - `TURNSTILE_SECRET_KEY`: (Optional) Cloudflare Turnstile Secret Key.
+
+## Address support
+
+- Recipient addresses can now be either Legacy base58 (`N...` / `t...`) or the new PQ/AuthScript Bech32m (`nq1...` / `tnq1...`).
+- The faucet rejects addresses from the wrong chain. Testnet only accepts `t...` and `tnq1...`; mainnet only accepts `N...` and `nq1...`.
+- The funding wallet itself can also be configured as `legacy` or `pq` with `FAUCET_WALLET_TYPE`.
 
 3. **Deploy with Docker Compose**:
    ```bash
