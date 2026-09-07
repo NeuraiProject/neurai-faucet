@@ -42,7 +42,8 @@ A beautiful and lightweight faucet for Neurai (XNA) Testnet or Mainnet. Built wi
    - `MAX_QUEUE_SIZE`: Maximum concurrent claims queued before returning 503 (default: `50`).
    - `MNEMONIC`: The 12-word mnemonic of the wallet that holds the faucet funds.
    - `FAUCET_WALLET_TYPE`: `legacy` or `pq` — how to derive the faucet funding wallet from the mnemonic.
-   - `FRONTEND_PORT`: External port to expose the faucet (default: `80`).
+   - `FRONTEND_PORT`: Port the faucet is published on (default: `54321`). Keep it outside the ephemeral range (`32768-60999`), or an outgoing connection may take it and the container will fail to start with `address already in use`.
+   - `FRONTEND_BIND`: Interface to publish it on (default: `127.0.0.1`, reachable only through the reverse proxy). Use `0.0.0.0` to expose the faucet directly.
    - `PUBLIC_TURNSTILE_SITE_KEY`: (Optional) Cloudflare Turnstile Site Key.
    - `TURNSTILE_SECRET_KEY`: (Optional) Cloudflare Turnstile Secret Key.
    - `PUBLIC_SITE_URL`: (Optional) Public origin of the faucet, e.g. `https://faucet.neurai.org`. Enables Neurai Connect.
@@ -78,9 +79,12 @@ browser ──1. begin (pre-session cookie)──▶ faucet backend      (nonce,
    ```
 
 ## NGIX Configuration
+
+With the default `FRONTEND_BIND=127.0.0.1`, the container is published on loopback only, so nginx runs on the host and is the sole way in. Point `proxy_pass` at the same port as `FRONTEND_PORT`.
+
    ```
 location / {
-    proxy_pass         http://%ip%:54321;
+    proxy_pass         http://127.0.0.1:8080;
     proxy_http_version 1.1;
     proxy_set_header   Host              $host;
     proxy_set_header   X-Real-IP         $remote_addr;

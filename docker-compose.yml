@@ -33,7 +33,10 @@ services:
     container_name: neurai-faucet-frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-54321}:4321"
+      # Bound to loopback by default, so the faucet is reachable only through
+      # the reverse proxy on the host. Set FRONTEND_BIND=0.0.0.0 to publish it
+      # on every interface instead.
+      - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT:-54321}:4321"
     environment:
       - PUBLIC_BACKEND_URL=http://backend:3000/api
     env_file:
