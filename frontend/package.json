@@ -11,6 +11,12 @@
   },
   "dependencies": {
     "@astrojs/node": "^8.3.4",
-    "astro": "^4.16.0"
+    "@neuraiproject/neurai-connect": "^0.0.1",
+    "@neuraiproject/neurai-connect-core": "^0.0.1",
+    "astro": "^4.16.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.6"
   }
 }

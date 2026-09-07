@@ -1,4 +1,5 @@
 import * as redis from 'redis';
+import { randomBytes } from 'crypto';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -70,6 +71,49 @@ export const rollbackRateLimit = async (ip: string, address: string): Promise<vo
     client.del(`faucet:ip:${ip}`),
     client.del(`faucet:address:${address}`)
   ]);
+};
+
+// ── Neurai Connect ────────────────────────────────────────────────
+
+/**
+ * The `MinimalRedisClient` shape `@neuraiproject/neurai-auth` expects, over the
+ * same connection. `eval` is what makes a login transaction single-use across
+ * processes: the package refuses a client that offers neither `eval` nor
+ * `getdel` rather than silently downgrading to a racy GET + DEL.
+ */
+export const redisAuthClient = {
+  set: (key: string, value: string, opts?: { px?: number }) =>
+    opts?.px ? client.set(key, value, { PX: opts.px }) : client.set(key, value),
+  get: (key: string) => client.get(key),
+  del: (key: string) => client.del(key),
+  eval: (script: string, keys: string[], args: string[]) =>
+    client.eval(script, { keys, arguments: args }) as Promise<unknown>
+};
+
+const TICKET_PREFIX = 'faucet:connect:ticket:';
+const isTicket = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+
+/**
+ * Issues the claim ticket handed to the browser once a Connect login verified.
+ * It is the only thing that exempts a claim from the captcha, so it is opaque,
+ * short-lived and bound to the address that actually signed.
+ */
+export const issueConnectTicket = async (address: string, ttlSeconds: number): Promise<string> => {
+  const ticket = randomBytes(32).toString('hex');
+  await client.set(`${TICKET_PREFIX}${ticket}`, address, { EX: ttlSeconds });
+  return ticket;
+};
+
+/** The address a ticket was issued for, without spending it. */
+export const peekConnectTicket = async (ticket: unknown): Promise<string | null> => {
+  if (!isTicket(ticket)) return null;
+  return client.get(`${TICKET_PREFIX}${ticket}`);
+};
+
+/** Spends a ticket. Atomic, so two concurrent claims cannot both use the same one. */
+export const consumeConnectTicket = async (ticket: unknown): Promise<string | null> => {
+  if (!isTicket(ticket)) return null;
+  return client.getDel(`${TICKET_PREFIX}${ticket}`);
 };
 
 export default client;

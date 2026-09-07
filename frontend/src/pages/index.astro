@@ -57,6 +57,32 @@ import Layout from '../layouts/Layout.astro';
       <h2 class="form-title">Request XNA</h2>
       <p class="form-subtitle">Enter your Neurai address to receive free XNA tokens.</p>
 
+      <!-- NEURAI CONNECT — hidden unless the backend has it configured -->
+      <div id="connect-panel" class="connect-panel" style="display:none">
+        <div class="connect-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2.5"></rect><line x1="10.5" y1="18.5" x2="13.5" y2="18.5"></line></svg>
+        </div>
+        <div class="connect-copy">
+          <p class="connect-title">Connect with NeuraiWallet</p>
+          <p class="connect-sub">Scan a QR with the app: your address is verified by signature, so there is no captcha and the XNA is sent right away.</p>
+        </div>
+        <button type="button" id="connect-btn" class="connect-btn">Connect</button>
+      </div>
+
+      <!-- The same slot once a wallet has been verified -->
+      <div id="connected-panel" class="connected-panel" style="display:none">
+        <span class="connected-check">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        </span>
+        <div class="connect-copy">
+          <p class="connect-title">Wallet connected</p>
+          <code id="connected-address" class="connected-address"></code>
+        </div>
+        <button type="button" id="disconnect-btn" class="copy-btn">Disconnect</button>
+      </div>
+
+      <div id="connect-divider" class="or-divider" style="display:none"><span>or enter an address manually</span></div>
+
       <form id="faucet-form">
         <div class="input-group">
           <label for="address">Your Neurai Address</label>
@@ -86,6 +112,38 @@ import Layout from '../layouts/Layout.astro';
     </div>
 
   </main>
+
+  <!-- NEURAI CONNECT QR -->
+  <div id="qr-overlay" class="qr-overlay" hidden>
+    <div class="qr-modal">
+      <div class="qr-head">
+        <div>
+          <p class="card-label">NEURAI CONNECT</p>
+          <h3 class="qr-title">Scan with NeuraiWallet</h3>
+        </div>
+        <button type="button" id="qr-close" class="icon-btn" aria-label="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+      </div>
+
+      <div class="qr-frame">
+        <canvas id="qr-canvas" width="260" height="260"></canvas>
+        <div id="qr-spinner" class="loader qr-loader"></div>
+      </div>
+
+      <p id="qr-status" class="qr-status">Opening the connection…</p>
+
+      <div class="qr-actions">
+        <a id="qr-deeplink" class="qr-deeplink" href="#" style="display:none">Open in NeuraiWallet</a>
+        <button type="button" id="qr-copy" class="copy-btn">Copy link</button>
+      </div>
+
+      <p class="qr-hint">
+        Approve on your phone. The XNA goes to the address you approve there.
+        <span id="qr-countdown" class="qr-countdown"></span>
+      </p>
+    </div>
+  </div>
 
   <!-- FOOTER -->
   <footer class="site-footer">
@@ -123,6 +181,7 @@ import Layout from '../layouts/Layout.astro';
 
   let turnstileLoaded = false;
   let currentSiteKey: string | null = null;
+  let turnstileWidget: string | undefined;
 
   function loadTurnstile(siteKey: string) {
     if (currentSiteKey === siteKey) return; // already loaded with same key
@@ -137,19 +196,28 @@ import Layout from '../layouts/Layout.astro';
       script.async = true;
       script.defer = true;
       script.onload = () => {
-        (window as any).turnstile.render(container, { sitekey: siteKey });
+        turnstileWidget = (window as any).turnstile.render(container, { sitekey: siteKey });
       };
       document.head.appendChild(script);
     } else {
-      (window as any).turnstile?.render(container, { sitekey: siteKey });
+      turnstileWidget = (window as any).turnstile?.render(container, { sitekey: siteKey });
     }
   }
 
   function hideTurnstile() {
     const wrapper = document.getElementById('captcha-wrapper') as HTMLElement;
     wrapper.style.display = 'none';
+    // Remove the widget, not just its wrapper: a connected wallet hides the
+    // captcha and a disconnect brings it back, and `render` refuses to run
+    // twice on the same container.
+    if (turnstileWidget !== undefined) {
+      (window as any).turnstile?.remove(turnstileWidget);
+      turnstileWidget = undefined;
+    }
     currentSiteKey = null;
-  }  const faucetAddrEl    = document.getElementById('faucet-address') as HTMLElement;
+  }
+
+  const faucetAddrEl    = document.getElementById('faucet-address') as HTMLElement;
   const faucetBalanceEl = document.getElementById('faucet-balance') as HTMLElement;
   const networkLabel    = document.getElementById('network-label')  as HTMLElement;
   const statusDot       = document.getElementById('status-dot')     as HTMLElement;
@@ -179,11 +247,13 @@ import Layout from '../layouts/Layout.astro';
           networkLabel.textContent =
             data.network === 'mainnet' ? 'Mainnet' : 'Testnet';
         }
-        if (data.turnstile) {
+        // A verified wallet replaces the captcha, so it is not shown while connected.
+        if (data.turnstile && !connected) {
           loadTurnstile(data.turnstile);
         } else {
           hideTurnstile();
         }
+        setConnectAvailable(data.connect ?? null);
       } else {
         setRpcStatus(false);
       }
@@ -192,9 +262,6 @@ import Layout from '../layouts/Layout.astro';
       console.error('Error fetching faucet info:', err);
     }
   }
-
-  updateFaucetInfo();
-  setInterval(updateFaucetInfo, 5000);
 
   // Copy address
   copyBtn.addEventListener('click', () => {
@@ -213,12 +280,13 @@ import Layout from '../layouts/Layout.astro';
   const loader    = submitBtn.querySelector('.loader')       as HTMLElement;
   const messageEl = document.getElementById('message')       as HTMLElement;
 
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const address = (document.getElementById('address') as HTMLInputElement).value;
-    const captchaToken = (document.querySelector('[name="cf-turnstile-response"]') as HTMLInputElement | null)?.value || undefined;
-
+  /**
+   * The one path to `/api/claim`, shared by the manual form and by a wallet
+   * that has just connected — a connected claim carries `connectTicket`
+   * instead of a captcha token.
+   */
+  async function submitClaim(payload: { address: string; captchaToken?: string; connectTicket?: string }): Promise<boolean> {
+    let sent = false;
     submitBtn.disabled = true;
     btnText.classList.add('hidden');
     loader.classList.remove('hidden');
@@ -228,12 +296,13 @@ import Layout from '../layouts/Layout.astro';
       const res = await fetch('/api/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address, captchaToken }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
 
       if (res.ok) {
+        sent = true;
         messageEl.className = 'message success';
         messageEl.innerHTML = data.message;
         if (data.txid) {
@@ -253,7 +322,186 @@ import Layout from '../layouts/Layout.astro';
       messageEl.classList.remove('hidden');
       if ((window as any).turnstile) (window as any).turnstile.reset();
     }
+    return sent;
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const address = (document.getElementById('address') as HTMLInputElement).value;
+    if (connected) return void submitClaim({ address, connectTicket: connected.ticket });
+    const captchaToken = (document.querySelector('[name="cf-turnstile-response"]') as HTMLInputElement | null)?.value || undefined;
+    void submitClaim({ address, captchaToken });
   });
+
+  // ── Neurai Connect ───────────────────────────────────────────────
+  // The wallet signs this faucet's own nonce with the address that will receive
+  // the funds, which is what lets the backend skip the captcha. The QR panel is
+  // only ever a view over that exchange: everything it shows comes from the
+  // backend's authPayload.
+
+  const addressInput  = document.getElementById('address')           as HTMLInputElement;
+  const connectPanel  = document.getElementById('connect-panel')     as HTMLElement;
+  const connectedPanel= document.getElementById('connected-panel')   as HTMLElement;
+  const connectDiv    = document.getElementById('connect-divider')   as HTMLElement;
+  const connectBtn    = document.getElementById('connect-btn')       as HTMLButtonElement;
+  const disconnectBtn = document.getElementById('disconnect-btn')    as HTMLButtonElement;
+  const connectedAddr = document.getElementById('connected-address') as HTMLElement;
+  const overlay       = document.getElementById('qr-overlay')        as HTMLElement;
+  const qrCanvas      = document.getElementById('qr-canvas')         as HTMLCanvasElement;
+  const qrSpinner     = document.getElementById('qr-spinner')        as HTMLElement;
+  const qrStatus      = document.getElementById('qr-status')         as HTMLElement;
+  const qrCountdown   = document.getElementById('qr-countdown')      as HTMLElement;
+  const qrDeepLink    = document.getElementById('qr-deeplink')       as HTMLAnchorElement;
+  const qrCopy        = document.getElementById('qr-copy')           as HTMLButtonElement;
+  const qrClose       = document.getElementById('qr-close')          as HTMLButtonElement;
+
+  let connected: { address: string; ticket: string } | null = null;
+  let relayUrl: string | null = null;
+  let attempt: AbortController | null = null;
+  let countdownTimer: number | undefined;
+  let pairingUri = '';
+
+  const shortAddress = (a: string) => (a.length > 22 ? `${a.slice(0, 12)}…${a.slice(-8)}` : a);
+
+  function renderConnectPanels() {
+    const offer = relayUrl !== null && !connected;
+    connectPanel.style.display = offer ? 'flex' : 'none';
+    connectDiv.style.display = offer ? 'flex' : 'none';
+    connectedPanel.style.display = connected ? 'flex' : 'none';
+  }
+
+  /** Shows or hides the whole feature, from what `/api/info` reports. */
+  function setConnectAvailable(info: { relayUrl: string; chainId: string } | null) {
+    relayUrl = info?.relayUrl ?? null;
+    renderConnectPanels();
+  }
+
+  function setConnected(result: { address: string; ticket: string } | null) {
+    connected = result;
+    if (result) {
+      addressInput.value = result.address;
+      addressInput.readOnly = true;
+      connectedAddr.textContent = shortAddress(result.address);
+      connectedAddr.title = result.address;
+      hideTurnstile();
+    } else {
+      addressInput.readOnly = false;
+      void updateFaucetInfo(); // brings the captcha back
+    }
+    renderConnectPanels();
+  }
+
+  function stopCountdown() {
+    if (countdownTimer !== undefined) clearInterval(countdownTimer);
+    countdownTimer = undefined;
+    qrCountdown.textContent = '';
+  }
+
+  function startCountdown(expiresAt: number) {
+    stopCountdown();
+    const tick = () => {
+      const left = Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
+      qrCountdown.textContent = left > 0
+        ? `Expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}.`
+        : 'This request expired — close and try again.';
+      if (left <= 0) stopCountdown();
+    };
+    tick();
+    countdownTimer = window.setInterval(tick, 1000);
+  }
+
+  function closeOverlay() {
+    overlay.hidden = true;
+    stopCountdown();
+    attempt?.abort();
+    attempt = null;
+  }
+
+  async function startConnect() {
+    if (!relayUrl) return;
+
+    const { connectWallet, isUserRejection } = await import('../lib/connect');
+    const { renderQr } = await import('../lib/qr');
+
+    attempt?.abort();
+    attempt = new AbortController();
+    const signal = attempt.signal;
+
+    overlay.hidden = false;
+    qrCanvas.style.display = 'none';
+    qrSpinner.classList.remove('hidden');
+    qrStatus.textContent = 'Opening the connection…';
+    qrDeepLink.style.display = 'none';
+    messageEl.classList.add('hidden');
+    stopCountdown();
+
+    try {
+      const result = await connectWallet(relayUrl, {
+        signal,
+        onStatus: (status) => {
+          if (signal.aborted) return;
+          qrStatus.textContent = status === 'pairing'
+            ? 'Opening the connection…'
+            : status === 'waiting'
+              ? 'Waiting for you to approve in the app…'
+              : 'Checking the signature…';
+        },
+        onPairing: ({ uri, deepLink, expiresAt }) => {
+          if (signal.aborted) return;
+          pairingUri = uri;
+          qrSpinner.classList.add('hidden');
+          qrCanvas.style.display = 'block';
+          void renderQr(qrCanvas, uri);
+          // On a phone the camera cannot scan the screen it is showing, so the
+          // deep link is the way in; on a desktop it would only fail.
+          if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+            qrDeepLink.href = deepLink;
+            qrDeepLink.style.display = 'inline-flex';
+          }
+          startCountdown(expiresAt);
+        },
+      });
+
+      if (signal.aborted) return;
+      closeOverlay();
+      setConnected({ address: result.address, ticket: result.ticket });
+      // What the user asked for by scanning: no second button to press.
+      const sent = await submitClaim({ address: result.address, connectTicket: result.ticket });
+      // A connection pays exactly once. Once it has, offer a fresh one rather
+      // than leaving a spent ticket behind the "Get XNA" button; a claim that
+      // failed keeps it, because its ticket was never spent.
+      if (sent) setConnected(null);
+    } catch (error) {
+      if (signal.aborted) return;
+      closeOverlay();
+      messageEl.className = 'message error';
+      messageEl.textContent = isUserRejection(error)
+        ? 'The wallet rejected the connection.'
+        : `Could not connect: ${error instanceof Error ? error.message : String(error)}`;
+      messageEl.classList.remove('hidden');
+    }
+  }
+
+  connectBtn.addEventListener('click', () => void startConnect());
+  qrClose.addEventListener('click', closeOverlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !overlay.hidden) closeOverlay(); });
+
+  qrCopy.addEventListener('click', () => {
+    if (!pairingUri) return;
+    navigator.clipboard.writeText(pairingUri).then(() => {
+      qrCopy.textContent = 'Copied!';
+      setTimeout(() => { qrCopy.textContent = 'Copy link'; }, 2000);
+    });
+  });
+
+  disconnectBtn.addEventListener('click', () => {
+    addressInput.value = '';
+    setConnected(null);
+  });
+
+  updateFaucetInfo();
+  setInterval(updateFaucetInfo, 5000);
 </script>
 
 <style>
@@ -580,6 +828,219 @@ import Layout from '../layouts/Layout.astro';
     cursor: not-allowed;
   }
 
+  /* ── Neurai Connect ──────────────────────────────────────────── */
+  .connect-panel,
+  .connected-panel {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 1rem 1.1rem;
+    border-radius: var(--radius-inner);
+    border: 1px solid var(--orange-border);
+    background: var(--orange-light);
+    margin-bottom: 1.25rem;
+  }
+
+  .connected-panel {
+    border-color: var(--success-color);
+    background: var(--success-bg);
+  }
+
+  .connect-icon,
+  .connected-check {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+    border-radius: 10px;
+    background: var(--orange);
+    color: #fff;
+  }
+
+  .connected-check {
+    background: var(--success-color);
+  }
+
+  .connect-copy {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .connect-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-main);
+  }
+
+  .connected-panel .connect-title {
+    color: var(--success-color);
+  }
+
+  .connect-sub {
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--text-label);
+    margin-top: 0.15rem;
+  }
+
+  .connected-address {
+    display: block;
+    margin-top: 0.15rem;
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 0.8rem;
+    color: var(--success-color);
+    word-break: break-all;
+  }
+
+  .connect-btn {
+    background: var(--orange);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.6rem 1.1rem;
+    font-size: 0.88rem;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.2s, transform 0.1s;
+  }
+
+  .connect-btn:hover { background: var(--orange-hover); }
+  .connect-btn:active { transform: scale(0.98); }
+
+  .or-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .or-divider::before,
+  .or-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--divider);
+  }
+
+  input[type="text"]:read-only {
+    color: var(--text-label);
+    cursor: not-allowed;
+  }
+
+  /* ── QR overlay ──────────────────────────────────────────────── */
+  .qr-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+    background: rgba(17, 24, 39, 0.6);
+    backdrop-filter: blur(3px);
+  }
+
+  .qr-overlay[hidden] { display: none; }
+
+  .qr-modal {
+    width: 100%;
+    max-width: 360px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-card);
+    box-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
+    padding: 1.35rem 1.5rem 1.5rem;
+    text-align: center;
+  }
+
+  .qr-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    text-align: left;
+    margin-bottom: 1.1rem;
+  }
+
+  .qr-head .card-label { margin-bottom: 0.2rem; }
+
+  .qr-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text-main);
+  }
+
+  /* The code itself stays near-black on white in both themes: an inverted QR
+     is refused by many scanners. */
+  .qr-frame {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 260px;
+    padding: 0.75rem;
+    border-radius: var(--radius-inner);
+    background: #ffffff;
+    border: 1px solid var(--card-border);
+  }
+
+  .qr-frame canvas {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+
+  .qr-loader {
+    border-color: var(--card-border);
+    border-top-color: var(--orange);
+  }
+
+  .qr-status {
+    margin-top: 1rem;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-main);
+  }
+
+  .qr-actions {
+    display: flex;
+    justify-content: center;
+    gap: 0.6rem;
+    margin-top: 0.9rem;
+  }
+
+  .qr-deeplink {
+    display: inline-flex;
+    align-items: center;
+    background: var(--orange);
+    color: #fff;
+    text-decoration: none;
+    font-size: 0.82rem;
+    font-weight: 700;
+    padding: 0.35rem 0.9rem;
+    border-radius: 8px;
+  }
+
+  .qr-deeplink:hover { background: var(--orange-hover); }
+
+  .qr-hint {
+    margin-top: 0.9rem;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+  }
+
+  .qr-countdown { display: block; }
+
   /* ── Messages ────────────────────────────────────────────────── */
   .message {
     margin-top: 1rem;
@@ -657,6 +1118,17 @@ import Layout from '../layouts/Layout.astro';
 
     .page-content {
       padding: 1.25rem 1rem;
+    }
+
+    /* The button would be squeezed against the text on a narrow screen. */
+    .connect-panel,
+    .connected-panel {
+      flex-wrap: wrap;
+    }
+
+    .connect-btn,
+    .connected-panel .copy-btn {
+      width: 100%;
     }
   }
 </style>

@@ -6,6 +6,7 @@ A beautiful and lightweight faucet for Neurai (XNA) Testnet or Mainnet. Built wi
 
 - **Multi-network**: Supports both Mainnet and Testnet.
 - **Modern UI**: Clean, responsive, light-purple design built with Astro.
+- **Neurai Connect**: claim by scanning a QR code with the NeuraiWallet mobile app — the wallet signs with the address that will receive the funds, so no captcha is needed and the XNA is sent as soon as the user approves.
 - **Anti-Abuse**:
   - Rate limiting by IP and Address using Redis (with automatic expiration).
   - Optional Cloudflare Turnstile (Captcha) integration.
@@ -44,6 +45,26 @@ A beautiful and lightweight faucet for Neurai (XNA) Testnet or Mainnet. Built wi
    - `FRONTEND_PORT`: External port to expose the faucet (default: `80`).
    - `PUBLIC_TURNSTILE_SITE_KEY`: (Optional) Cloudflare Turnstile Site Key.
    - `TURNSTILE_SECRET_KEY`: (Optional) Cloudflare Turnstile Secret Key.
+   - `PUBLIC_SITE_URL`: (Optional) Public origin of the faucet, e.g. `https://faucet.neurai.org`. Enables Neurai Connect.
+   - `CONNECT_RELAY_URL`: (Optional) Neurai Connect relay. Default `wss://relay.neurai.org/v1`.
+
+## Neurai Connect
+
+With `PUBLIC_SITE_URL` set, the claim card offers **Connect with NeuraiWallet**. The visitor scans a QR code with the mobile app and approves; the wallet signs a CAIP-122 message with the address that will receive the funds, and the faucet sends the XNA straight away.
+
+```
+browser ──1. begin (pre-session cookie)──▶ faucet backend      (nonce, domain, chain, 10-min window)
+   │                                                            
+   └──2. QR / deep link ──▶ relay ──▶ NeuraiWallet ──3. approve and sign──▶ relay ──▶ browser
+                                                                            │
+   ◀──5. claim ticket ── faucet backend ◀──4. complete (CACAO) ─────────────┘
+```
+
+- **Why it replaces the captcha.** A Turnstile challenge says something about the browser and nothing about the address typed next to it. A Connect login is a signature over this faucet's own nonce made by the key that owns the destination address, so it is a strictly stronger claim. The per-IP and per-address rate limits still apply exactly as before — Connect changes who is asking, not how often they may ask.
+- **What is fixed on the server.** The domain, the login URI, the chain and the nonce come from `PUBLIC_SITE_URL` and the backend's own configuration, never from the browser. The login is bound to an `HttpOnly` pre-session cookie and consumed exactly once, so a CACAO obtained elsewhere cannot be submitted through someone else's browser.
+- **What the relay sees.** Topics, sizes and timing. Everything between the site and the wallet is end-to-end encrypted, and no private key leaves the phone. Run your own relay with `CONNECT_RELAY_URL` if you prefer.
+- **Which address gets paid.** Whatever address the user approves in the wallet. The faucet asks for a spendable wallet address (`addressPolicy: "wallet"`) and re-checks that its encoding belongs to the configured network before paying.
+- Requires a NeuraiWallet build with Neurai Connect, and `PUBLIC_SITE_URL` must match the origin the browser actually loads, otherwise every login fails the domain check.
 
 ## Address support
 
