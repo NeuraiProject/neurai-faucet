@@ -45,11 +45,13 @@ import Layout from '../layouts/Layout.astro';
         <p class="card-label">FAUCET ADDRESS</p>
         <div class="address-row">
           <code id="faucet-address" class="address-code">Loading…</code>
-          <button id="copy-btn" class="copy-btn" title="Copy address">Copy</button>
+          <button id="copy-btn" class="copy-btn" title="Copy address" disabled>Copy</button>
         </div>
       </div>
 
     </div>
+
+    <p id="faucet-info-error" class="message error" role="status" hidden></p>
 
     <!-- FAUCET FORM CARD -->
     <div class="card form-card">
@@ -101,7 +103,7 @@ import Layout from '../layouts/Layout.astro';
           <div id="cf-turnstile-container"></div>
         </div>
 
-        <button type="submit" id="submit-btn">
+        <button type="submit" id="submit-btn" disabled>
           <span class="btn-text">Get XNA</span>
           <div class="loader hidden"></div>
         </button>
@@ -223,22 +225,33 @@ import Layout from '../layouts/Layout.astro';
   const statusDot       = document.getElementById('status-dot')     as HTMLElement;
   const copyBtn         = document.getElementById('copy-btn')        as HTMLButtonElement;
   const submitBtn_rpc   = document.getElementById('submit-btn')      as HTMLButtonElement;
+  const infoErrorEl     = document.getElementById('faucet-info-error') as HTMLElement;
+  let rpcOnline = false;
+  let claimPending = false;
+  let infoPending = false;
 
   function setRpcStatus(online: boolean) {
+    rpcOnline = online;
     statusDot.style.background = online ? '#22c55e' : '#ef4444';
     statusDot.title = online ? 'RPC connected' : 'RPC unreachable';
-    submitBtn_rpc.disabled = !online;
+    submitBtn_rpc.disabled = !online || claimPending;
     submitBtn_rpc.title = online ? '' : 'RPC unreachable — try again later';
   }
 
   async function updateFaucetInfo() {
+    if (infoPending) return;
+    infoPending = true;
     try {
-      const res = await fetch('/api/info');
+      const res = await fetch('/api/info', { cache: 'no-store', signal: AbortSignal.timeout(15000) });
       if (res.ok) {
         const data = await res.json();
-        setRpcStatus(true);
+        const hasBalance = typeof data.balance === 'number' && Number.isFinite(data.balance);
+        setRpcStatus(data.rpcOnline !== false && hasBalance);
         faucetAddrEl.textContent    = data.address;
-        faucetBalanceEl.textContent = data.balance.toFixed(2);
+        copyBtn.disabled = !data.address;
+        faucetBalanceEl.textContent = hasBalance ? data.balance.toFixed(2) : '—';
+        infoErrorEl.hidden = rpcOnline;
+        infoErrorEl.textContent = rpcOnline ? '' : 'Faucet balance is temporarily unavailable. Please try again later.';
         if (data.amount !== undefined) {
           const amountEl = document.getElementById('claim-amount-value');
           if (amountEl) amountEl.textContent = data.amount;
@@ -255,11 +268,17 @@ import Layout from '../layouts/Layout.astro';
         }
         setConnectAvailable(data.connect ?? null);
       } else {
-        setRpcStatus(false);
+        throw new Error(`Faucet info request failed (HTTP ${res.status}).`);
       }
     } catch (err) {
       setRpcStatus(false);
+      faucetBalanceEl.textContent = '—';
+      if (copyBtn.disabled) faucetAddrEl.textContent = 'Unavailable';
+      infoErrorEl.textContent = 'Faucet information is temporarily unavailable. Please try again later.';
+      infoErrorEl.hidden = false;
       console.error('Error fetching faucet info:', err);
+    } finally {
+      infoPending = false;
     }
   }
 
@@ -286,7 +305,9 @@ import Layout from '../layouts/Layout.astro';
    * instead of a captcha token.
    */
   async function submitClaim(payload: { address: string; captchaToken?: string; connectTicket?: string }): Promise<boolean> {
+    if (!rpcOnline || claimPending) return false;
     let sent = false;
+    claimPending = true;
     submitBtn.disabled = true;
     btnText.classList.add('hidden');
     loader.classList.remove('hidden');
@@ -316,7 +337,8 @@ import Layout from '../layouts/Layout.astro';
       messageEl.className = 'message error';
       messageEl.textContent = 'Connection error. Is the backend running?';
     } finally {
-      submitBtn.disabled = false;
+      claimPending = false;
+      submitBtn.disabled = !rpcOnline;
       btnText.classList.remove('hidden');
       loader.classList.add('hidden');
       messageEl.classList.remove('hidden');

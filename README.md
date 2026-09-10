@@ -101,6 +101,33 @@ location / {
 - **Backend**: Node.js/TypeScript API on port `3000` (internal only, not exposed).
 - **Database**: Redis for tracking IP/Address requests with TTL-based expiration.
 
+## Troubleshooting wallet information
+
+If the address or balance is unavailable, check the backend logs:
+
+```bash
+docker compose logs --tail=100 backend
+```
+
+`API Info Balance Error` identifies a failed balance query. The address and faucet
+configuration still load, but the balance is `null` and `rpcOnline` is `false`;
+the page shows an error and disables claims until a successful refresh. A failed
+query is never displayed as a zero balance. `API Info Error` indicates that the
+remaining faucet information could not be loaded (for example, wallet derivation
+failed).
+
+An RPC error with `status: 403` means the configured RPC endpoint rejected the
+backend's request. Check the URL selected by `NETWORK` and test access from the
+faucet server. For the default public testnet endpoint:
+
+```bash
+curl -i --max-time 15 -u user:pass \
+  -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' \
+  https://rpc-testnet.neurai.org/rpc
+```
+
+
 ## License
 
 Apache License 2.0. See `LICENSE` for details.

@@ -111,16 +111,26 @@ app.get('/health', (req, res) => {
 
 // ── Faucet Info ───────────────────────────────────────────────────
 app.get('/api/info', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   try {
     const wallet = getFaucetWallet();
-    const balance = await getFaucetBalance();
+    // The funding address and configuration remain useful when the RPC fails.
+    // A missing balance must never be presented as an empty wallet.
+    let balance: number | null = null;
+    try {
+      balance = await getFaucetBalance();
+    } catch (error) {
+      console.error('API Info Balance Error:', error);
+    }
     const siteKey = process.env.PUBLIC_TURNSTILE_SITE_KEY;
     const turnstileEnabled = !!(siteKey && siteKey !== '' && siteKey !== '1x00000000000000000000AA');
     res.json({
       address: wallet.address,
       balance: balance,
+      rpcOnline: balance !== null,
+      error: balance === null ? 'Faucet balance is temporarily unavailable. Please try again later.' : null,
       amount: Number(process.env.FAUCET_AMOUNT || 100),
-      network: process.env.NETWORK,
+      network: NETWORK,
       waitHours: Number(process.env.WAIT_TIME_HOURS || 24),
       turnstile: turnstileEnabled ? siteKey : null,
       connect: connectInfo(),

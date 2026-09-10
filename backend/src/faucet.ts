@@ -255,8 +255,15 @@ export const getFaucetBalance = async () => {
   const address = wallet.address;
 
   const balanceResponse: any = await rpc('getaddressbalance', [{ addresses: [address] }]);
-  console.log('Balance RPC Response:', balanceResponse);
   // Balance response is typically { balance: sats, received: sats }
-  const balanceSats = BigInt(balanceResponse?.balance || 0);
-  return Number(balanceSats) / 100000000;
+  const balance = balanceResponse?.balance;
+  if (!((typeof balance === 'number' && Number.isInteger(balance) && balance >= 0)
+    || (typeof balance === 'string' && /^\d+$/.test(balance)))) {
+    throw new Error('getaddressbalance returned an invalid balance. Check the RPC endpoint and address index.');
+  }
+  const balanceXna = Number(BigInt(balance)) / 100000000;
+  if (!Number.isFinite(balanceXna)) {
+    throw new Error('getaddressbalance returned an out-of-range balance.');
+  }
+  return balanceXna;
 };

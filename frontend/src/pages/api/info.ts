@@ -13,7 +13,8 @@ export const GET: APIRoute = async () => {
     return new Response(JSON.stringify(data), {
       status: response.status,
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store'
       }
     });
 
@@ -24,7 +25,8 @@ export const GET: APIRoute = async () => {
     }), {
       status: 500,
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store'
       }
     });
   }
