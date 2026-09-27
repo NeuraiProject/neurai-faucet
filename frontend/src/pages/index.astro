@@ -260,6 +260,11 @@ import Layout from '../layouts/Layout.astro';
           networkLabel.textContent =
             data.network === 'mainnet' ? 'Mainnet' : 'Testnet';
         }
+        if (Array.isArray(data.addressTypes) && data.addressTypes.length > 0) {
+          const input = document.getElementById('address') as HTMLInputElement;
+          input.placeholder = data.addressTypes.map((t: { prefix: string }) => `${t.prefix}…`).join(' · ');
+          input.title = 'Accepted: ' + data.addressTypes.map((t: { label: string; prefix: string }) => `${t.label} (${t.prefix}…)`).join(', ');
+        }
         // A verified wallet replaces the captcha, so it is not shown while connected.
         if (data.turnstile && !connected) {
           loadTurnstile(data.turnstile);

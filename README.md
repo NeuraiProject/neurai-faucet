@@ -41,7 +41,7 @@ A beautiful and lightweight faucet for Neurai (XNA) Testnet or Mainnet. Built wi
    - `WAIT_TIME_HOURS`: Hours a user must wait before requesting again (`0` disables rate limiting).
    - `MAX_QUEUE_SIZE`: Maximum concurrent claims queued before returning 503 (default: `50`).
    - `MNEMONIC`: The 12-word mnemonic of the wallet that holds the faucet funds.
-   - `FAUCET_WALLET_TYPE`: `legacy` or `pq` — how to derive the faucet funding wallet from the mnemonic.
+   - `FAUCET_WALLET_TYPE`: `legacy` (default), `authscript`, `pq` or `ecdsa` — the address type of the faucet funding wallet (see [Address support](#address-support)).
    - `FRONTEND_PORT`: Port the faucet is published on (default: `54321`). Keep it outside the ephemeral range (`32768-60999`), or an outgoing connection may take it and the container will fail to start with `address already in use`.
    - `FRONTEND_BIND`: Interface to publish it on (default: `127.0.0.1`, reachable only through the reverse proxy). Use `0.0.0.0` to expose the faucet directly.
    - `PUBLIC_TURNSTILE_SITE_KEY`: (Optional) Cloudflare Turnstile Site Key.
@@ -64,14 +64,26 @@ browser ──1. begin (pre-session cookie)──▶ faucet backend      (nonce,
 - **Why it replaces the captcha.** A Turnstile challenge says something about the browser and nothing about the address typed next to it. A Connect login is a signature over this faucet's own nonce made by the key that owns the destination address, so it is a strictly stronger claim. The per-IP and per-address rate limits still apply exactly as before — Connect changes who is asking, not how often they may ask.
 - **What is fixed on the server.** The domain, the login URI, the chain and the nonce come from `PUBLIC_SITE_URL` and the backend's own configuration, never from the browser. The login is bound to an `HttpOnly` pre-session cookie and consumed exactly once, so a CACAO obtained elsewhere cannot be submitted through someone else's browser.
 - **What the relay sees.** Topics, sizes and timing. Everything between the site and the wallet is end-to-end encrypted, and no private key leaves the phone. Run your own relay with `CONNECT_RELAY_URL` if you prefer.
-- **Which address gets paid.** Whatever address the user approves in the wallet. The faucet asks for a spendable wallet address (`addressPolicy: "wallet"`) and re-checks that its encoding belongs to the configured network before paying.
+- **Which address gets paid.** Whatever address the user approves in the wallet. The faucet asks for a spendable wallet address (`addressPolicy: "wallet"`) and runs the same address checks as a manual claim before paying.
+- **Address types.** `neurai-auth` 0.0.1 verifies logins from Legacy addresses. Post-quantum v2 (`tpq1z…`) and ECDSA v3 (`tnq1r…`) logins fail its signature check until it ships with `neurai-message` 0.11 or later; those users can still claim by pasting the address.
 - Requires a NeuraiWallet build with Neurai Connect, and `PUBLIC_SITE_URL` must match the origin the browser actually loads, otherwise every login fails the domain check.
 
 ## Address support
 
-- Recipient addresses can now be either Legacy base58 (`N...` / `t...`) or the new PQ/AuthScript Bech32m (`nq1...` / `tnq1...`).
-- The faucet rejects addresses from the wrong chain. Testnet only accepts `t...` and `tnq1...`; mainnet only accepts `N...` and `nq1...`.
-- The funding wallet itself can also be configured as `legacy` or `pq` with `FAUCET_WALLET_TYPE`.
+The faucet uses the address types of `@neuraiproject/neurai-key` 5:
+
+| Type | Mainnet | Testnet | What it is |
+|---|---|---|---|
+| `legacy` | `N…` | `t…` | Base58 P2PKH |
+| `authscript` | `nc1p…` | `tnc1p…` | AuthScript witness v1 with a post-quantum key |
+| `pq` | `pq1z…` | `tpq1z…` | Strict post-quantum witness v2 |
+| `ecdsa` | `nq1r…` | `tnq1r…` | Strict ECDSA witness v3 |
+
+- **Only active types.** Before a type activates, its outputs can be spent by anyone. The faucet pays only to the types active on its network: all four on testnet, and only `legacy` on mainnet. It also refuses a funding wallet (`FAUCET_WALLET_TYPE`) of an inactive type.
+- **The node has the last word.** A recipient must also pass the node's `validateaddress`. The node refuses the v2/v3 types until they are active, so an RPC node that does not run those rules yet cannot receive a payment to them. The RPC node must run the Neurai version that introduced these encodings (the reset testnet), because older nodes do not decode `tnc1p…`, `tpq1z…` or `tnq1r…`.
+- **Wrong chain.** Addresses from the other network are rejected. So is the old `nq1p…` / `tnq1p…` AuthScript encoding: the node no longer accepts it.
+- **Fees.** The fee is computed on the signed size of the transaction, at 2000 sat/vB. A post-quantum input weighs about 977 vB, against 148 for a Legacy one. Change below the node's dust threshold (546 sats for Legacy, 3060 for post-quantum) goes to the fee.
+- **Upgrading.** `legacy` keeps the same address and funds as earlier faucet versions. `pq` used to mean the AuthScript v1 wallet (`tnq1p…`). That type is now `authscript`, and neurai-key 5 derives a different key for it, so it needs new funds.
 
 3. **Deploy with Docker Compose**:
    ```bash

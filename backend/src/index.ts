@@ -9,8 +9,7 @@ import {
   peekConnectTicket,
   consumeConnectTicket
 } from './redis';
-import { sendFaucetFunds, getFaucetWallet, getFaucetBalance } from './faucet';
-import { decodeAddress } from '@neuraiproject/neurai-create-transaction';
+import { sendFaucetFunds, getFaucetWallet, getFaucetBalance, checkDestination, getAcceptedAddressTypes } from './faucet';
 import { handleBegin, handleComplete, readPreSession } from '@neuraiproject/neurai-auth';
 import { getConnect, connectInfo, PRE_SESSION_COOKIE } from './connect';
 
@@ -19,9 +18,6 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 const NETWORK = (process.env.NETWORK || 'testnet') as 'mainnet' | 'testnet';
-const ALLOWED_DESTINATION_NETWORKS = NETWORK === 'mainnet'
-  ? new Set(['xna', 'xna-pq'])
-  : new Set(['xna-test', 'xna-pq-test']);
 
 // ── Security middleware ──────────────────────────────────────────
 app.use(cors({ origin: false }));
@@ -131,6 +127,7 @@ app.get('/api/info', async (req, res) => {
       error: balance === null ? 'Faucet balance is temporarily unavailable. Please try again later.' : null,
       amount: Number(process.env.FAUCET_AMOUNT || 100),
       network: NETWORK,
+      addressTypes: getAcceptedAddressTypes(),
       waitHours: Number(process.env.WAIT_TIME_HOURS || 24),
       turnstile: turnstileEnabled ? siteKey : null,
       connect: connectInfo(),
@@ -211,17 +208,11 @@ app.post('/api/connect/complete', async (req, res) => {
     if (!outcome.login) return res.status(outcome.status).json(outcome.body);
 
     // The signature is valid, but the chain of `iss` is not by itself a promise
-    // that the faucet can pay this address: check the encoding it will send to.
+    // that the faucet can pay this address: run the same checks as a manual claim.
     const { address } = outcome.login;
-    try {
-      const destination = decodeAddress(address);
-      if (!ALLOWED_DESTINATION_NETWORKS.has(destination.network)) {
-        return res.status(400).json({
-          error: { code: 'address_network_mismatch', message: `The wallet signed with a ${destination.network} address. This faucet is running on ${NETWORK}.` }
-        });
-      }
-    } catch {
-      return res.status(400).json({ error: { code: 'invalid_address', message: 'The wallet signed with an address this faucet cannot pay.' } });
+    const destination = await checkDestination(address);
+    if (!destination.ok) {
+      return res.status(400).json({ error: { code: destination.code, message: `The wallet signed with an address this faucet cannot pay. ${destination.message}` } });
     }
 
     const ticket = await issueConnectTicket(address, CONNECT_TICKET_TTL_SECONDS);
@@ -260,16 +251,10 @@ app.post('/api/claim', async (req, res) => {
   }
 
   try {
-    // ── Gate 4: address format ──
-    try {
-      const destination = decodeAddress(address);
-      if (!ALLOWED_DESTINATION_NETWORKS.has(destination.network)) {
-        return res.status(400).json({
-          error: `Address network mismatch. This faucet is running on ${NETWORK}.`
-        });
-      }
-    } catch {
-      return res.status(400).json({ error: 'Invalid Neurai address' });
+    // ── Gate 4: address format, chain and type ──
+    const destination = await checkDestination(address);
+    if (!destination.ok) {
+      return res.status(400).json({ error: destination.message });
     }
 
     // ── Gate 5: captcha, unless a Neurai Connect login already proved the address ──
