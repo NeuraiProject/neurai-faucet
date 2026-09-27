@@ -17,7 +17,7 @@ import Signer, {
   type IUTXO,
   type PrivateKeyInput
 } from '@neuraiproject/neurai-sign-transaction';
-import { getRPC } from '@neuraiproject/neurai-rpc';
+import { assertRpcGenesis, getRPC, MAINNET_GENESIS_HASH, TESTNET_GENESIS_HASH } from '@neuraiproject/neurai-rpc';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -30,6 +30,9 @@ const RPC_URL = NETWORK === 'mainnet'
 const FAUCET_WALLET_TYPE = (process.env.FAUCET_WALLET_TYPE || 'legacy').toLowerCase();
 const FAUCET_AMOUNT = Number(process.env.FAUCET_AMOUNT || 100);
 const COINBASE_MATURITY = Number(process.env.COINBASE_MATURITY || 10);
+// The genesis block the RPC node must serve. The override only exists to run the faucet against a regtest node.
+const GENESIS_HASH = process.env.RPC_GENESIS_HASH
+  || (NETWORK === 'mainnet' ? MAINNET_GENESIS_HASH : TESTNET_GENESIS_HASH);
 
 // Twice the node's default minimum relay fee (1000 sat/vB).
 const FEE_RATE_SATS_PER_VBYTE = 2000n;
@@ -122,7 +125,23 @@ function getDustThreshold(address: string): bigint {
   return BigInt(Math.ceil(vbytes)) * DUST_RELAY_FEE_SATS_PER_KVB / 1000n;
 }
 
-const rpc = getRPC('user', 'pass', RPC_URL);
+const nodeRpc = getRPC('user', 'pass', RPC_URL);
+let chainVerified: Promise<void> | undefined;
+
+/**
+ * The RPC client, once the node has shown it serves this faucet's chain. Legacy
+ * addresses look the same on the reset testnet and on the one before it, so an
+ * endpoint left on the old chain would read balances and pay claims there
+ * without a single error. A failed check is retried on the next call.
+ */
+const rpc = async (method: string, params: any[]) => {
+  chainVerified ??= assertRpcGenesis(nodeRpc, GENESIS_HASH).catch((error) => {
+    chainVerified = undefined;
+    throw new Error(`The RPC node is not on the ${NETWORK} chain this faucet expects. ${error instanceof Error ? error.message : error}`);
+  });
+  await chainVerified;
+  return nodeRpc(method, params);
+};
 
 /**
  * Derives the faucet address and private key from the mnemonic

@@ -37,6 +37,7 @@ A beautiful and lightweight faucet for Neurai (XNA) Testnet or Mainnet. Built wi
    - `NETWORK`: `testnet` or `mainnet` — selects which RPC URL to use and which recipient address networks are accepted.
    - `RPC_URL_TESTNET`: Neurai Testnet RPC endpoint.
    - `RPC_URL_MAINNET`: Neurai Mainnet RPC endpoint.
+   - `RPC_GENESIS_HASH`: (Optional) Only to run against a regtest node: the genesis block the RPC node must serve. By default it is the one of `NETWORK`.
    - `FAUCET_AMOUNT`: Amount of XNA to send per request.
    - `WAIT_TIME_HOURS`: Hours a user must wait before requesting again (`0` disables rate limiting).
    - `MAX_QUEUE_SIZE`: Maximum concurrent claims queued before returning 503 (default: `50`).
@@ -65,7 +66,8 @@ browser ──1. begin (pre-session cookie)──▶ faucet backend      (nonce,
 - **What is fixed on the server.** The domain, the login URI, the chain and the nonce come from `PUBLIC_SITE_URL` and the backend's own configuration, never from the browser. The login is bound to an `HttpOnly` pre-session cookie and consumed exactly once, so a CACAO obtained elsewhere cannot be submitted through someone else's browser.
 - **What the relay sees.** Topics, sizes and timing. Everything between the site and the wallet is end-to-end encrypted, and no private key leaves the phone. Run your own relay with `CONNECT_RELAY_URL` if you prefer.
 - **Which address gets paid.** Whatever address the user approves in the wallet. The faucet asks for a spendable wallet address (`addressPolicy: "wallet"`) and runs the same address checks as a manual claim before paying.
-- **Address types.** `neurai-auth` 0.0.1 verifies logins from Legacy addresses. Post-quantum v2 (`tpq1z…`) and ECDSA v3 (`tnq1r…`) logins fail its signature check until it ships with `neurai-message` 0.11 or later; those users can still claim by pasting the address.
+- **Address types.** A login can come from any of the four address types (`neurai-auth` 0.0.2). The wallet signs each one as the node's `signmessage` does, and for PQ v2 and ECDSA v3 the signature is bound to the address. The retired `nq1p…` / `tnq1p…` encoding is rejected.
+- **Chain identifier.** The testnet reset of 2026-09-26 changed the testnet CAIP-2 identifier to `bip122:0000008b384aeffecdab182575dc4e86`. The wallet must use `neurai-connect-core` 0.0.2 or later too, otherwise its testnet logins fail with `unsupported_chain`.
 - Requires a NeuraiWallet build with Neurai Connect, and `PUBLIC_SITE_URL` must match the origin the browser actually loads, otherwise every login fails the domain check.
 
 ## Address support
@@ -80,7 +82,8 @@ The faucet uses the address types of `@neuraiproject/neurai-key` 5:
 | `ecdsa` | `nq1r…` | `tnq1r…` | Strict ECDSA witness v3 |
 
 - **Only active types.** Before a type activates, its outputs can be spent by anyone. The faucet pays only to the types active on its network: all four on testnet, and only `legacy` on mainnet. It also refuses a funding wallet (`FAUCET_WALLET_TYPE`) of an inactive type.
-- **The node has the last word.** A recipient must also pass the node's `validateaddress`. The node refuses the v2/v3 types until they are active, so an RPC node that does not run those rules yet cannot receive a payment to them. The RPC node must run the Neurai version that introduced these encodings (the reset testnet), because older nodes do not decode `tnc1p…`, `tpq1z…` or `tnq1r…`.
+- **The node has the last word.** A recipient must also pass the node's `validateaddress`. The node refuses the v2/v3 types until they are active, so an RPC node that does not run those rules yet cannot receive a payment to them.
+- **The right chain.** Before its first RPC call the backend checks that the node's genesis block is the one of `NETWORK` (the reset testnet on testnet). Legacy addresses look the same on the old and the reset testnet, so an RPC URL left on the old chain would otherwise pay claims there without any error. With a mismatch the balance shows as unavailable and claims fail, and the log names both hashes. Set `RPC_GENESIS_HASH` only to run the faucet against a regtest node.
 - **Wrong chain.** Addresses from the other network are rejected. So is the old `nq1p…` / `tnq1p…` AuthScript encoding: the node no longer accepts it.
 - **Fees.** The fee is computed on the signed size of the transaction, at 2000 sat/vB. A post-quantum input weighs about 977 vB, against 148 for a Legacy one. Change below the node's dust threshold (546 sats for Legacy, 3060 for post-quantum) goes to the fee.
 - **Upgrading.** `legacy` keeps the same address and funds as earlier faucet versions. `pq` used to mean the AuthScript v1 wallet (`tnq1p…`). That type is now `authscript`, and neurai-key 5 derives a different key for it, so it needs new funds.
