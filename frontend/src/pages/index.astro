@@ -57,7 +57,7 @@ import Layout from '../layouts/Layout.astro';
     <div class="card form-card">
       <p class="card-label">CLAIM</p>
       <h2 class="form-title">Request XNA</h2>
-      <p class="form-subtitle">Enter your Neurai address to receive free XNA tokens.</p>
+      <p class="form-subtitle">Enter your Neurai address or silent payment code to receive free XNA tokens.</p>
 
       <!-- NEURAI CONNECT — hidden unless the backend has it configured -->
       <div id="connect-panel" class="connect-panel" style="display:none">
@@ -87,7 +87,7 @@ import Layout from '../layouts/Layout.astro';
 
       <form id="faucet-form">
         <div class="input-group">
-          <label for="address">Your Neurai Address</label>
+          <label id="address-label" for="address">Your Neurai Address</label>
           <input
             type="text"
             id="address"
@@ -96,7 +96,9 @@ import Layout from '../layouts/Layout.astro';
             required
             autocomplete="off"
             spellcheck="false"
+            aria-describedby="address-hint"
           />
+          <p id="address-hint" class="address-hint" hidden></p>
         </div>
 
         <div id="captcha-wrapper" class="captcha-wrapper" style="display:none">
@@ -260,10 +262,15 @@ import Layout from '../layouts/Layout.astro';
           networkLabel.textContent =
             data.network === 'mainnet' ? 'Mainnet' : 'Testnet';
         }
-        if (Array.isArray(data.addressTypes) && data.addressTypes.length > 0) {
-          const input = document.getElementById('address') as HTMLInputElement;
-          input.placeholder = data.addressTypes.map((t: { prefix: string }) => `${t.prefix}…`).join(' · ');
-          input.title = 'Accepted: ' + data.addressTypes.map((t: { label: string; prefix: string }) => `${t.label} (${t.prefix}…)`).join(', ');
+        // What this faucet pays: it depends on the network and on its wallet type.
+        if (Array.isArray(data.accepts) && data.accepts.length > 0) {
+          const hint = document.getElementById('address-hint') as HTMLElement;
+          hint.textContent = `Accepted: ${data.accepts.join(', ')}. Contract addresses (tnc1p…) are not accepted.`;
+          hint.hidden = false;
+          (document.getElementById('address-label') as HTMLElement).textContent =
+            data.silentPayments ? 'Your Neurai address or silent payment code' : 'Your Neurai address';
+          (document.getElementById('address') as HTMLInputElement).placeholder =
+            data.silentPayments ? 'Address or tnsp1… code' : 'Address here';
         }
         // A verified wallet replaces the captcha, so it is not shown while connected.
         if (data.turnstile && !connected) {
@@ -333,6 +340,12 @@ import Layout from '../layouts/Layout.astro';
         messageEl.innerHTML = data.message;
         if (data.txid) {
           messageEl.innerHTML += `<small>TXID: ${data.txid}</small>`;
+        }
+        // A silent payment arrives at a one-time address derived for this transaction.
+        if (typeof data.paidAddress === 'string') {
+          const paid = document.createElement('small');
+          paid.textContent = `Paid to: ${data.paidAddress}`;
+          messageEl.appendChild(paid);
         }
       } else {
         messageEl.className = 'message error';
@@ -804,6 +817,13 @@ import Layout from '../layouts/Layout.astro';
   input[type="text"]:focus {
     outline: none;
     border-color: var(--orange);
+  }
+
+  .address-hint {
+    margin: 0.5rem 0 0;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    opacity: 0.7;
   }
 
   input[type="text"]::placeholder {

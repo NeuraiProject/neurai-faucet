@@ -1,6 +1,6 @@
 {
   "name": "neurai-faucet-backend",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Backend for Neurai Faucet",
   "main": "dist/index.js",
   "scripts": {
@@ -11,10 +11,11 @@
   "dependencies": {
     "@neuraiproject/neurai-auth": "^0.0.2",
     "@neuraiproject/neurai-connect-core": "^0.0.2",
-    "@neuraiproject/neurai-create-transaction": "^0.9.2",
-    "@neuraiproject/neurai-key": "^5.0.3",
-    "@neuraiproject/neurai-rpc": "^0.7.0",
-    "@neuraiproject/neurai-sign-transaction": "^3.0.3",
+    "@neuraiproject/neurai-create-transaction": "^0.10.0",
+    "@neuraiproject/neurai-key": "^5.0.4",
+    "@neuraiproject/neurai-rpc": "^0.9.1",
+    "@neuraiproject/neurai-sign-transaction": "^3.5.0",
+    "@neuraiproject/neurai-silent-payments": "^0.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",

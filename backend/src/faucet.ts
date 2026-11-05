@@ -1,23 +1,8 @@
-import NeuraiKey, {
-  type IAddressObject,
-  type IPQAddressObject,
-  type IPQAuthScriptAddressObject
-} from '@neuraiproject/neurai-key';
-import {
-  createPaymentTransaction,
-  decodeAddress,
-  encodeDestinationScript,
-  type AddressDestination,
-  type DestinationType
-} from '@neuraiproject/neurai-create-transaction';
-import Signer, {
-  estimateInputVbytes,
-  estimateOutputBytes,
-  estimateVirtualSize,
-  type IUTXO,
-  type PrivateKeyInput
-} from '@neuraiproject/neurai-sign-transaction';
-import { assertRpcGenesis, getRPC, MAINNET_GENESIS_HASH, TESTNET_GENESIS_HASH } from '@neuraiproject/neurai-rpc';
+import NeuraiKey, { type IAddressObject, type IPQAddressObject } from '@neuraiproject/neurai-key';
+import { createPaymentTransaction, decodeAddress, encodeDestinationScript } from '@neuraiproject/neurai-create-transaction';
+import Signer, { estimateTransactionVbytes } from '@neuraiproject/neurai-sign-transaction';
+import { getRPC, assertRpcGenesis, MAINNET_GENESIS_HASH, TESTNET_GENESIS_HASH } from '@neuraiproject/neurai-rpc';
+import { checkCode, createOutputs } from '@neuraiproject/neurai-silent-payments';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -27,121 +12,140 @@ const NETWORK = (process.env.NETWORK || 'testnet') as 'mainnet' | 'testnet';
 const RPC_URL = NETWORK === 'mainnet'
   ? (process.env.RPC_URL_MAINNET || '')
   : (process.env.RPC_URL_TESTNET || '');
-const FAUCET_WALLET_TYPE = (process.env.FAUCET_WALLET_TYPE || 'legacy').toLowerCase();
+const FAUCET_WALLET_TYPE = (process.env.FAUCET_WALLET_TYPE || 'ecdsa').toLowerCase();
 const FAUCET_AMOUNT = Number(process.env.FAUCET_AMOUNT || 100);
 const COINBASE_MATURITY = Number(process.env.COINBASE_MATURITY || 10);
-// The genesis block the RPC node must serve. The override only exists to run the faucet against a regtest node.
-const GENESIS_HASH = process.env.RPC_GENESIS_HASH
-  || (NETWORK === 'mainnet' ? MAINNET_GENESIS_HASH : TESTNET_GENESIS_HASH);
-
-// Twice the node's default minimum relay fee (1000 sat/vB).
-const FEE_RATE_SATS_PER_VBYTE = 2000n;
-// The node's DUST_RELAY_TX_FEE.
-const DUST_RELAY_FEE_SATS_PER_KVB = 3000n;
+// The node relays from 1,000 sat/vbyte; the fee is computed on the signed size.
+const FEE_RATE_SAT_PER_VBYTE = BigInt(process.env.FEE_RATE_SAT_PER_VBYTE || 2000);
 
 type ChainNetwork = 'mainnet' | 'testnet';
+export type FaucetWalletType = 'legacy' | 'ecdsa' | 'pq';
+type FaucetWallet = IAddressObject | IPQAddressObject;
+type KeyNetwork = 'xna' | 'xna-test' | 'xna-legacy' | 'xna-legacy-test' | 'xna-pq' | 'xna-pq-test';
 
-/**
- * The address types of neurai-key 5, as the faucet names them:
- * - legacy:     Base58 P2PKH (N… / t…)
- * - authscript: generic AuthScript witness v1 with an ML-DSA-44 key (nc1p… / tnc1p…)
- * - pq:         strict post-quantum witness v2 (pq1z… / tpq1z…)
- * - ecdsa:      strict ECDSA witness v3 (nq1r… / tnq1r…)
- */
-export type AddressType = 'legacy' | 'authscript' | 'pq' | 'ecdsa';
-type FaucetWallet = IAddressObject | IPQAddressObject | IPQAuthScriptAddressObject;
-
-const ADDRESS_TYPES: readonly AddressType[] = ['legacy', 'authscript', 'pq', 'ecdsa'];
-
-/**
- * neurai-key 5 network label of each address type. Beware the renames since
- * neurai-key 3: "xna" is now ECDSA witness v3 (Legacy moved to "xna-legacy"),
- * and "xna-pq" is now PQ witness v2, not the AuthScript v1 of "xna-authscript".
- */
-const keyNetworks = {
-  mainnet: { legacy: 'xna-legacy', authscript: 'xna-authscript', pq: 'xna-pq', ecdsa: 'xna' },
-  testnet: { legacy: 'xna-legacy-test', authscript: 'xna-authscript-test', pq: 'xna-pq-test', ecdsa: 'xna-test' }
-} as const;
-
-/**
- * Address types whose spending rules are active on each chain (Neurai-DePIN
- * chainparams). An AuthScript output of a family that is not active yet is
- * anyone-can-spend, so the faucet neither keeps its funds in one nor pays to one.
- */
-const activeAddressTypes: Record<ChainNetwork, readonly AddressType[]> = {
-  mainnet: ['legacy'],
-  testnet: ['legacy', 'authscript', 'pq', 'ecdsa']
+// neurai-key 5 labels: `xna[-test]` is strict ECDSA witness v3 (nq1r… / tnq1r…),
+// `xna-legacy[-test]` Base58 P2PKH and `xna-pq[-test]` strict PQ witness v2 (pq1z… / tpq1z…).
+const keyNetworks: Record<ChainNetwork, Record<FaucetWalletType, KeyNetwork>> = {
+  mainnet: { legacy: 'xna-legacy', ecdsa: 'xna', pq: 'xna-pq' },
+  testnet: { legacy: 'xna-legacy-test', ecdsa: 'xna-test', pq: 'xna-pq-test' }
 };
 
-const addressTypeInfo: Record<AddressType, { label: string; prefix: Record<ChainNetwork, string> }> = {
-  legacy: { label: 'Legacy', prefix: { mainnet: 'N', testnet: 't' } },
-  authscript: { label: 'AuthScript', prefix: { mainnet: 'nc1p', testnet: 'tnc1p' } },
-  pq: { label: 'Post-quantum', prefix: { mainnet: 'pq1z', testnet: 'tpq1z' } },
-  ecdsa: { label: 'ECDSA', prefix: { mainnet: 'nq1r', testnet: 'tnq1r' } }
+/**
+ * Destination families the faucet pays, as `decodeAddress` names them. Generic
+ * AuthScript v1 addresses (contracts, nc1p… / tnc1p…) are not paid: their
+ * spending conditions are a script, not a wallet key. On mainnet the strict PQ
+ * and ECDSA families are not active yet, so only Legacy is paid there.
+ */
+const PAYABLE_TYPES: Record<ChainNetwork, ReadonlySet<string>> = {
+  mainnet: new Set(['p2pkh']),
+  testnet: new Set(['p2pkh', 'ecdsa', 'pq'])
 };
+const SILENT_PAYMENT_NETWORK = NETWORK === 'mainnet' ? 'main' : 'test';
 
-const addressTypeOfDestination: Record<DestinationType, AddressType> = {
-  p2pkh: 'legacy',
-  authscript: 'authscript',
-  pq: 'pq',
-  ecdsa: 'ecdsa'
-};
-
-function getConfiguredWalletType(): AddressType {
-  const walletType = ADDRESS_TYPES.find((type) => type === FAUCET_WALLET_TYPE);
-  if (!walletType) {
-    throw new Error(`Unsupported FAUCET_WALLET_TYPE "${FAUCET_WALLET_TYPE}". Use one of: ${ADDRESS_TYPES.join(', ')}.`);
+export function getConfiguredWalletType(): FaucetWalletType {
+  if (FAUCET_WALLET_TYPE === 'legacy' || FAUCET_WALLET_TYPE === 'ecdsa' || FAUCET_WALLET_TYPE === 'pq') {
+    if (NETWORK === 'mainnet' && FAUCET_WALLET_TYPE !== 'legacy') {
+      throw new Error(`FAUCET_WALLET_TYPE "${FAUCET_WALLET_TYPE}" is not active on mainnet yet. Use "legacy".`);
+    }
+    return FAUCET_WALLET_TYPE;
   }
-  if (!activeAddressTypes[NETWORK].includes(walletType)) {
-    throw new Error(`FAUCET_WALLET_TYPE "${walletType}" is not active on ${NETWORK}. Use one of: ${activeAddressTypes[NETWORK].join(', ')}.`);
-  }
-  return walletType;
+
+  throw new Error(`Unsupported FAUCET_WALLET_TYPE "${FAUCET_WALLET_TYPE}". Use "legacy", "ecdsa" or "pq".`);
 }
 
-function getWalletNetwork() {
+function getWalletNetwork(): KeyNetwork {
   return keyNetworks[NETWORK][getConfiguredWalletType()];
 }
 
-/** Key material for the signer: the WIF of a secp256k1 wallet, the seed and AuthScript template of a PQ one. */
-function getSignerKey(wallet: FaucetWallet): PrivateKeyInput {
-  if ('seedKey' in wallet) {
-    return {
-      seedKey: wallet.seedKey,
-      authType: wallet.authType,
-      witnessScript: wallet.witnessScript
-    };
+/** Silent payments need every input to be a strict ECDSA v3 output (NIP-047). */
+export function canPaySilentPayments(): boolean {
+  return NETWORK === 'testnet' && getConfiguredWalletType() === 'ecdsa';
+}
+
+/** Address kinds this faucet pays, for the page. */
+export function acceptedDestinations(): string[] {
+  if (NETWORK === 'mainnet') return ['Legacy (N…)'];
+  return ['Legacy (t…)', 'ECDSA (tnq1r…)', 'Post-quantum (tpq1z…)', ...(canPaySilentPayments() ? ['Silent payment code (tnsp1…)'] : [])];
+}
+
+export type Destination = { kind: 'address'; address: string } | { kind: 'silent'; code: string };
+
+/** A request was refused for a reason the user can act on; the message is shown as is. */
+export class DestinationError extends Error {}
+
+/**
+ * Validates a destination and returns it in canonical form: Bech32m addresses
+ * and payment codes are case-insensitive, so they are lower-cased (one rate
+ * limit per destination, however it is typed).
+ */
+export function parseDestination(input: string): Destination {
+  const text = input.trim();
+  if (/^t?nsp1/i.test(text)) {
+    if (!canPaySilentPayments()) {
+      throw new DestinationError(NETWORK === 'mainnet'
+        ? 'Silent payments are not active on mainnet yet.'
+        : 'This faucet cannot pay silent payment codes: its wallet is not an ECDSA wallet.');
+    }
+    const code = text.toLowerCase();
+    const checked = checkCode(code, SILENT_PAYMENT_NETWORK);
+    if (!checked.valid) {
+      throw new DestinationError(checked.reason === 'network'
+        ? `This silent payment code is for another network. This faucet is running on ${NETWORK}.`
+        : 'Invalid silent payment code.');
+    }
+    return { kind: 'silent', code };
   }
 
-  return wallet.WIF;
+  let destination: ReturnType<typeof decodeAddress>;
+  try {
+    destination = decodeAddress(text);
+  } catch {
+    throw new DestinationError('Invalid Neurai address');
+  }
+  const chain: ChainNetwork = destination.network.endsWith('-test') ? 'testnet' : 'mainnet';
+  if (chain !== NETWORK) {
+    throw new DestinationError(`Address network mismatch. This faucet is running on ${NETWORK}.`);
+  }
+  if (destination.type === 'authscript') {
+    throw new DestinationError('Contract addresses (AuthScript nc1p… / tnc1p…) are not supported. Use a wallet address.');
+  }
+  if (!PAYABLE_TYPES[NETWORK].has(destination.type)) {
+    throw new DestinationError('Only Legacy addresses (N…) can be paid on mainnet for now.');
+  }
+  return { kind: 'address', address: destination.type === 'p2pkh' ? text : text.toLowerCase() };
 }
 
-/**
- * Smallest change the node relays to `address` (policy.cpp GetDustThreshold):
- * the output plus the input that will spend it, at the dust relay fee. That is
- * 546 sats for P2PKH but 3060 for a PQ output, whose spend carries a ~1 kvB witness.
- */
-function getDustThreshold(address: string): bigint {
-  const vbytes = estimateOutputBytes(address) + estimateInputVbytes({ address });
-  return BigInt(Math.ceil(vbytes)) * DUST_RELAY_FEE_SATS_PER_KVB / 1000n;
+/** The key the rate limit counts a destination under. */
+export function destinationKey(destination: Destination): string {
+  return destination.kind === 'silent' ? destination.code : destination.address;
 }
 
-const nodeRpc = getRPC('user', 'pass', RPC_URL);
-let chainVerified: Promise<void> | undefined;
+// fetch() refuses URLs with credentials, so `user:pass@` travels as Basic auth.
+// Public endpoints accept any credentials.
+function rpcFromUrl(raw: string) {
+  const url = new URL(raw);
+  const username = decodeURIComponent(url.username) || 'user';
+  const password = decodeURIComponent(url.password) || 'pass';
+  url.username = '';
+  url.password = '';
+  return getRPC(username, password, url.toString());
+}
 
-/**
- * The RPC client, once the node has shown it serves this faucet's chain. Legacy
- * addresses look the same on the reset testnet and on the one before it, so an
- * endpoint left on the old chain would read balances and pay claims there
- * without a single error. A failed check is retried on the next call.
- */
-const rpc = async (method: string, params: any[]) => {
-  chainVerified ??= assertRpcGenesis(nodeRpc, GENESIS_HASH).catch((error) => {
-    chainVerified = undefined;
-    throw new Error(`The RPC node is not on the ${NETWORK} chain this faucet expects. ${error instanceof Error ? error.message : error}`);
+const rpc = rpcFromUrl(RPC_URL);
+
+// Block 0 of the chain the faucet pays on. EXPECTED_GENESIS overrides it for
+// regtest or a private network.
+const EXPECTED_GENESIS = (process.env.EXPECTED_GENESIS || (NETWORK === 'mainnet' ? MAINNET_GENESIS_HASH : TESTNET_GENESIS_HASH)).toLowerCase();
+let chainChecked: Promise<void> | null = null;
+
+/** Refuses an RPC node of another chain (e.g. the testnet before the 2026-11-05 reset). Checked once. */
+function assertChain(): Promise<void> {
+  chainChecked ??= assertRpcGenesis(rpc, EXPECTED_GENESIS).catch((error: unknown) => {
+    chainChecked = null;
+    throw new Error(`The RPC node is not on the expected ${NETWORK} chain (genesis ${EXPECTED_GENESIS}): ${error instanceof Error ? error.message : JSON.stringify(error)}`);
   });
-  await chainVerified;
-  return nodeRpc(method, params);
-};
+  return chainChecked;
+}
 
 /**
  * Derives the faucet address and private key from the mnemonic
@@ -149,101 +153,42 @@ const rpc = async (method: string, params: any[]) => {
 export const getFaucetWallet = (): FaucetWallet => {
   try {
     const walletType = getConfiguredWalletType();
-    const networks = keyNetworks[NETWORK];
-
+    const network = getWalletNetwork();
     if (walletType === 'pq') {
-      return NeuraiKey.getPQAddress(networks.pq, MNEMONIC, 0, 0);
+      return NeuraiKey.getPQAddress(network as 'xna-pq' | 'xna-pq-test', MNEMONIC, 0, 0);
     }
-    if (walletType === 'authscript') {
-      return NeuraiKey.getPQAuthScriptAddress(networks.authscript, MNEMONIC, 0, 0);
-    }
-
-    // Legacy and ECDSA share the secp256k1 derivation; the label picks the path and encoding.
-    return NeuraiKey.getAddressPair(networks[walletType], MNEMONIC, 0, 0).external;
+    return NeuraiKey.getAddressPair(network as 'xna' | 'xna-test' | 'xna-legacy' | 'xna-legacy-test', MNEMONIC, 0, 0).external;
   } catch (error) {
     console.error('Error deriving faucet wallet:', error);
     throw new Error('Could not derive faucet wallet. Check your MNEMONIC and FAUCET_WALLET_TYPE.');
   }
 };
 
-/** The address types this faucet pays to, for the frontend's hints. */
-export const getAcceptedAddressTypes = () =>
-  activeAddressTypes[NETWORK].map((type) => ({
-    type,
-    label: addressTypeInfo[type].label,
-    prefix: addressTypeInfo[type].prefix[NETWORK]
-  }));
+/** Private keys for the signer: a plain WIF for Legacy, the neurai-key object for the strict families. */
+function getSignerKeyMap(wallet: FaucetWallet): Record<string, any> {
+  return { [wallet.address]: getConfiguredWalletType() === 'legacy' ? (wallet as IAddressObject).WIF : wallet };
+}
 
-export type DestinationCheck =
-  | { ok: true; type: AddressType }
-  | { ok: false; code: 'invalid_address' | 'address_network_mismatch' | 'address_type_not_accepted'; message: string };
+type Coin = { txid: string; vout: number; script: string; satoshis: bigint };
 
 /**
- * Whether the faucet can pay to `address`: an address of this chain, of a type
- * whose spending rules are active here, and one the node itself decodes. The
- * node refuses the strict families before their activation height, so the last
- * check also catches an RPC node that does not run those rules yet.
+ * Sends Neurai to a destination address or silent payment code
  */
-export const checkDestination = async (address: string): Promise<DestinationCheck> => {
-  let destination: AddressDestination;
-  try {
-    destination = decodeAddress(address);
-  } catch {
-    return { ok: false, code: 'invalid_address', message: 'Invalid Neurai address.' };
-  }
-
-  const chain: ChainNetwork = destination.network.endsWith('-test') ? 'testnet' : 'mainnet';
-  if (chain !== NETWORK) {
-    return { ok: false, code: 'address_network_mismatch', message: `Address network mismatch. This faucet is running on ${NETWORK}.` };
-  }
-
-  const type = addressTypeOfDestination[destination.type];
-  const accepted = activeAddressTypes[NETWORK];
-  if (!accepted.includes(type)) {
-    const acceptedLabels = accepted.map((t) => addressTypeInfo[t].label).join(', ');
-    return {
-      ok: false,
-      code: 'address_type_not_accepted',
-      message: `${addressTypeInfo[type].label} addresses are not active on ${NETWORK} yet. This faucet pays to: ${acceptedLabels}.`
-    };
-  }
-
-  const validation: any = await rpc('validateaddress', [address]);
-  if (validation?.isvalid !== true) {
-    return {
-      ok: false,
-      code: 'address_type_not_accepted',
-      message: `The Neurai node does not accept ${addressTypeInfo[type].label} addresses yet.`
-    };
-  }
-
-  return { ok: true, type };
-};
-
-type SpendableUtxo = {
-  txid: string;
-  vout: number;
-  script: string;
-  satoshis: bigint;
-};
-
-/**
- * Sends Neurai to a destination address
- */
-export const sendFaucetFunds = async (toAddress: string) => {
+export const sendFaucetFunds = async (destination: Destination) => {
+  await assertChain();
   const wallet = getFaucetWallet();
   const fromAddress = wallet.address;
-  const signerNetwork = getWalletNetwork();
 
   console.log(`Faucet Wallet Address: ${fromAddress}`);
 
   // 1. Get confirmed UTXOs
   const allConfirmedUtxos: any[] = (await rpc('getaddressutxos', [{ addresses: [fromAddress] }]) as any) || [];
 
-  // Filter out immature coinbase UTXOs (need COINBASE_MATURITY confirmations)
+  // Filter out immature UTXOs (need COINBASE_MATURITY confirmations; a coin
+  // mined in the tip block has one, as the node counts them)
   const currentHeight: number = (await rpc('getblockcount', []) as any) || 0;
   const confirmedUtxos = allConfirmedUtxos.filter(
-    (u: any) => (currentHeight - u.height) >= COINBASE_MATURITY
+    (u: any) => (currentHeight - u.height + 1) >= COINBASE_MATURITY
   );
   console.log(`UTXOs: ${allConfirmedUtxos.length} total, ${confirmedUtxos.length} mature (height=${currentHeight}, maturity=${COINBASE_MATURITY})`);
 
@@ -258,28 +203,26 @@ export const sendFaucetFunds = async (toAddress: string) => {
 
   // Build set of txid:vout spent in mempool (negative satoshis = spend)
   const spentInMempool = new Set<string>();
-  const mempoolIncoming: SpendableUtxo[] = [];
+  const mempoolIncoming: Coin[] = [];
   // For mempool UTXOs, the script field is not returned by getaddressmempool.
   // We derive the locking script from the faucet address (it's always the change output).
   const faucetScript = Buffer.from(encodeDestinationScript(fromAddress)).toString('hex');
 
   for (const entry of mempoolEntries) {
-    // Amounts beyond 2^53 arrive as decimal strings (neurai-rpc keeps them lossless).
-    const satoshis = BigInt(entry.satoshis);
-    if (satoshis < 0n) {
+    if (BigInt(entry.satoshis) < 0n) {
       spentInMempool.add(`${entry.prevtxid}:${entry.prevout}`);
     } else {
       mempoolIncoming.push({
         txid: entry.txid,
         vout: entry.index,
         script: entry.script || faucetScript,  // derive script if not provided
-        satoshis
+        satoshis: BigInt(entry.satoshis)
       });
     }
   }
 
   // Filter confirmed UTXOs — remove those already spent in mempool
-  const availableConfirmed: SpendableUtxo[] = confirmedUtxos.filter(
+  const availableConfirmed: Coin[] = confirmedUtxos.filter(
     (u: any) => !spentInMempool.has(`${u.txid}:${u.outputIndex}`)
   ).map((u: any) => ({
     txid: u.txid,
@@ -302,80 +245,101 @@ export const sendFaucetFunds = async (toAddress: string) => {
   }
 
   const amountSats = BigInt(FAUCET_AMOUNT) * 100000000n;
-  const payment = { address: toAddress, valueSats: amountSats };
 
-  const toSignerUtxo = (u: SpendableUtxo): IUTXO => ({
-    address: fromAddress,
-    assetName: 'XNA', // Base currency
-    txid: u.txid,
-    outputIndex: u.vout,
-    script: u.script,
-    satoshis: u.satoshis,
-    value: Number(u.satoshis) / 100000000
-  });
-
-  const buildTx = (selectedInputs: SpendableUtxo[], changeSats: bigint | null) => createPaymentTransaction({
-    inputs: selectedInputs.map((u) => ({ txid: u.txid, vout: u.vout })),
-    payments: changeSats === null ? [payment] : [payment, { address: fromAddress, valueSats: changeSats }]
-  });
-
-  // Fee of the signed transaction, sized with the worst-case witness of each
-  // input: a PQ input weighs ~977 vB against 148 for P2PKH, so the size of the
-  // unsigned transaction says nothing about it. Output values do not change the
-  // size, so a zero change output is enough to measure the version that has one.
-  const feeFor = (selectedInputs: SpendableUtxo[], withChange: boolean) => {
-    const vsize = estimateVirtualSize(signerNetwork, buildTx(selectedInputs, withChange ? 0n : null).rawTx, selectedInputs.map(toSignerUtxo));
-    return BigInt(vsize) * FEE_RATE_SATS_PER_VBYTE;
+  // A silent payment address is derived from the transaction's inputs, so it
+  // is recomputed for every coin selection. NIP-047 needs strict ECDSA v3
+  // inputs and a version 2 transaction, which is what this faucet builds.
+  const payeeAddress = (selectedInputs: Coin[]): string => {
+    if (destination.kind === 'address') return destination.address;
+    const privateKey = (wallet as IAddressObject).privateKey;
+    const [output] = createOutputs(
+      selectedInputs.map((i) => ({ txid: i.txid, vout: i.vout, privateKey, script: i.script })),
+      [{ code: destination.code, amount: FAUCET_AMOUNT }],
+      { network: SILENT_PAYMENT_NETWORK }
+    );
+    return output.address;
   };
-  const sumSats = (selectedInputs: SpendableUtxo[]) => selectedInputs.reduce((acc, u) => acc + u.satoshis, 0n);
 
-  // Coin selection: start with the smallest UTXO that covers the payment and
-  // the fee on its own; failing that, keep adding the largest unused UTXO.
-  // Every input spends the faucet address, so any single one costs the same.
+  // Fee of the signed transaction: inputs are sized by their script (a PQ
+  // spend is ~977 vbytes, an ECDSA v3 one 70, a Legacy one 148).
+  const feeFor = (selectedInputs: Coin[], toAddress: string) =>
+    BigInt(estimateTransactionVbytes(selectedInputs.map((i) => ({ script: i.script })), [toAddress, fromAddress])) * FEE_RATE_SAT_PER_VBYTE;
+
+  // Coin selection: start with the smallest UTXO that looks sufficient and add
+  // the largest unused one until the inputs pay the amount and the fee.
   const bySmallest = [...allAvailable].sort((a, b) => (a.satoshis < b.satoshis ? -1 : a.satoshis > b.satoshis ? 1 : 0));
   const byLargest = [...bySmallest].reverse();
 
-  const singleInputFee = feeFor([bySmallest[0]], true);
-  const candidate = bySmallest.find((u) => u.satoshis >= amountSats + singleInputFee);
-  const inputs = candidate ? [candidate] : [byLargest[0]];
+  const roughFee = feeFor([allAvailable[0]], fromAddress);
+  const candidate = bySmallest.find((u) => u.satoshis >= amountSats + roughFee);
+  const inputs: Coin[] = candidate ? [candidate] : [byLargest[0]];
 
-  while (sumSats(inputs) < amountSats + feeFor(inputs, false)) {
-    const next = byLargest.find((u) => !inputs.includes(u));
-    if (!next) {
-      throw new Error('Faucet has insufficient funds for this request.');
-    }
+  let feeSats = 0n;
+  let selectedSats = 0n;
+  let toAddress = '';
+
+  for (let attempt = 0; attempt < allAvailable.length; attempt++) {
+    selectedSats = inputs.reduce((acc, u) => acc + u.satoshis, 0n);
+    toAddress = payeeAddress(inputs);
+    feeSats = feeFor(inputs, toAddress);
+
+    if (selectedSats >= amountSats + feeSats) break;
+
+    // Not enough — add the largest unused UTXO
+    const used = new Set(inputs.map((u) => `${u.txid}:${u.vout}`));
+    const next = byLargest.find((u) => !used.has(`${u.txid}:${u.vout}`));
+    if (!next) break;
     inputs.push(next);
   }
 
-  // 3. Create final transaction. Change below the dust threshold would get the
-  //    transaction rejected, so it goes to the fee instead.
-  const selectedSats = sumSats(inputs);
-  const feeWithChange = feeFor(inputs, true);
-  const changeSats = selectedSats - amountSats - feeWithChange;
-  const keepChange = changeSats >= getDustThreshold(fromAddress);
-  const feeSats = keepChange ? feeWithChange : selectedSats - amountSats;
+  if (selectedSats < amountSats + feeSats) {
+    throw new Error('Faucet has insufficient funds for this request.');
+  }
 
-  console.log(`Coin selection: ${inputs.length} inputs, fee=${feeSats} sat (${Number(feeSats)/1e8} XNA), change=${keepChange ? changeSats : 0n} sat`);
+  const changeSats = selectedSats - amountSats - feeSats;
+  console.log(`Coin selection: ${inputs.length} inputs, fee=${feeSats} sat (${Number(feeSats)/1e8} XNA), change=${changeSats} sat`);
 
-  const builtTx = buildTx(inputs, keepChange ? changeSats : null);
+  // 3. Create final transaction with correct change
+  const payments: { address: string; valueSats: bigint }[] = [
+    { address: toAddress, valueSats: amountSats }
+  ];
+  if (changeSats > 0n) {
+    payments.push({ address: fromAddress, valueSats: changeSats });
+  }
+
+  const builtTx = createPaymentTransaction({
+    inputs: inputs.map((i) => ({ txid: i.txid, vout: i.vout })),
+    payments
+  });
 
   // 4. Sign transaction
   const signedTxHex = Signer.sign(
-    signerNetwork,
+    getWalletNetwork(),
     builtTx.rawTx,
-    inputs.map(toSignerUtxo),
-    { [fromAddress]: getSignerKey(wallet) }
+    inputs.map((i) => ({
+      address: fromAddress,
+      assetName: 'XNA', // Base currency
+      txid: i.txid,
+      outputIndex: i.vout,
+      script: i.script,
+      satoshis: Number(i.satoshis),
+      value: Number(i.satoshis) / 100000000
+    })),
+    getSignerKeyMap(wallet),
+    // The signer prints every signing step unless told not to.
+    { debug: false }
   );
 
   // 5. Broadcast transaction
   const txid: any = await rpc('sendrawtransaction', [signedTxHex]);
 
-  return txid;
+  return { txid, paidAddress: toAddress };
 };
 /**
  * Gets the balance of the faucet address
  */
 export const getFaucetBalance = async () => {
+  await assertChain();
   const wallet = getFaucetWallet();
   const address = wallet.address;
 

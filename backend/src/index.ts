@@ -9,7 +9,17 @@ import {
   peekConnectTicket,
   consumeConnectTicket
 } from './redis';
-import { sendFaucetFunds, getFaucetWallet, getFaucetBalance, checkDestination, getAcceptedAddressTypes } from './faucet';
+import {
+  sendFaucetFunds,
+  getFaucetWallet,
+  getFaucetBalance,
+  parseDestination,
+  destinationKey,
+  acceptedDestinations,
+  canPaySilentPayments,
+  DestinationError,
+  type Destination
+} from './faucet';
 import { handleBegin, handleComplete, readPreSession } from '@neuraiproject/neurai-auth';
 import { getConnect, connectInfo, PRE_SESSION_COOKIE } from './connect';
 
@@ -66,9 +76,9 @@ function clientIp(req: express.Request): string {
 const MAX_QUEUE_SIZE = Number(process.env.MAX_QUEUE_SIZE || 50);
 
 type QueueJob = {
-  address: string;
+  destination: Destination;
   ip: string;
-  resolve: (result: { txid: string }) => void;
+  resolve: (result: { txid: string; paidAddress: string }) => void;
   reject:  (err: Error) => void;
 };
 
@@ -87,11 +97,10 @@ async function processQueue() {
   while (queue.length > 0) {
     const job = queue.shift()!;
     try {
-      const txid = await sendFaucetFunds(job.address);
-      job.resolve({ txid });
+      job.resolve(await sendFaucetFunds(job.destination));
     } catch (err: any) {
       // Roll back the rate-limit lock so the user can try again
-      await rollbackRateLimit(job.ip, job.address).catch(() => {});
+      await rollbackRateLimit(job.ip, destinationKey(job.destination)).catch(() => {});
       const errMsg = err instanceof Error ? err.stack : JSON.stringify(err, null, 2);
       console.error('sendFaucetFunds raw error:', errMsg);
       job.reject(err instanceof Error ? err : new Error(errMsg ?? String(err)));
@@ -127,7 +136,8 @@ app.get('/api/info', async (req, res) => {
       error: balance === null ? 'Faucet balance is temporarily unavailable. Please try again later.' : null,
       amount: Number(process.env.FAUCET_AMOUNT || 100),
       network: NETWORK,
-      addressTypes: getAcceptedAddressTypes(),
+      accepts: acceptedDestinations(),
+      silentPayments: canPaySilentPayments(),
       waitHours: Number(process.env.WAIT_TIME_HOURS || 24),
       turnstile: turnstileEnabled ? siteKey : null,
       connect: connectInfo(),
@@ -208,11 +218,13 @@ app.post('/api/connect/complete', async (req, res) => {
     if (!outcome.login) return res.status(outcome.status).json(outcome.body);
 
     // The signature is valid, but the chain of `iss` is not by itself a promise
-    // that the faucet can pay this address: run the same checks as a manual claim.
+    // that the faucet can pay this address: check the encoding it will send to.
     const { address } = outcome.login;
-    const destination = await checkDestination(address);
-    if (!destination.ok) {
-      return res.status(400).json({ error: { code: destination.code, message: `The wallet signed with an address this faucet cannot pay. ${destination.message}` } });
+    try {
+      if (parseDestination(address).kind !== 'address') throw new DestinationError('The wallet signed with an address this faucet cannot pay.');
+    } catch (error) {
+      const message = error instanceof DestinationError ? error.message : 'The wallet signed with an address this faucet cannot pay.';
+      return res.status(400).json({ error: { code: 'invalid_address', message } });
     }
 
     const ticket = await issueConnectTicket(address, CONNECT_TICKET_TTL_SECONDS);
@@ -251,11 +263,14 @@ app.post('/api/claim', async (req, res) => {
   }
 
   try {
-    // ── Gate 4: address format, chain and type ──
-    const destination = await checkDestination(address);
-    if (!destination.ok) {
-      return res.status(400).json({ error: destination.message });
+    // ── Gate 4: destination format (address or silent payment code) ──
+    let destination: Destination;
+    try {
+      destination = parseDestination(address);
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof DestinationError ? error.message : 'Invalid Neurai address' });
     }
+    const key = destinationKey(destination);
 
     // ── Gate 5: captcha, unless a Neurai Connect login already proved the address ──
     // A wallet signature over this faucet's own nonce says more than a captcha
@@ -264,7 +279,7 @@ app.post('/api/claim', async (req, res) => {
     // rejected for being too early does not cost the user another scan.
     const connectEnabled = getConnect() !== null;
     const connectAddress = connectEnabled ? await peekConnectTicket(connectTicket) : null;
-    const connectVerified = connectAddress !== null && connectAddress === address;
+    const connectVerified = connectAddress !== null && connectAddress === address && destination.kind === 'address';
 
     if (connectEnabled && !connectVerified && typeof connectTicket === 'string' && connectTicket !== '') {
       // Saying "captcha required" here would send the user looking for a
@@ -292,7 +307,7 @@ app.post('/api/claim', async (req, res) => {
     }
 
     // ── Gate 7: per-IP / per-address rate limit (atomic, Redis) ──
-    const limitCheck = await checkRateLimit(ip, address, waitHours);
+    const limitCheck = await checkRateLimit(ip, key, waitHours);
     if (limitCheck.limited) {
       return res.status(429).json({ error: limitCheck.message });
     }
@@ -301,17 +316,23 @@ app.post('/api/claim', async (req, res) => {
     if (connectVerified) {
       const spent = await consumeConnectTicket(connectTicket);
       if (spent !== address) {
-        await rollbackRateLimit(ip, address).catch(() => {});
+        await rollbackRateLimit(ip, key).catch(() => {});
         return res.status(400).json({ error: 'This wallet connection was already used. Please connect again.' });
       }
     }
 
     // ── All gates passed: enqueue the send ──
     const position = enqueue({
-      address,
+      destination,
       ip,
-      resolve: ({ txid }) => {
-        res.json({ success: true, message: 'Funds sent successfully!', txid });
+      resolve: ({ txid, paidAddress }) => {
+        res.json({
+          success: true,
+          message: 'Funds sent successfully!',
+          txid,
+          // A silent payment arrives at a one-time address derived for this transaction.
+          ...(destination.kind === 'silent' ? { paidAddress } : {})
+        });
       },
       reject: (err) => {
         console.error('Queue job error:', err instanceof Error ? err.stack : JSON.stringify(err));
@@ -319,7 +340,7 @@ app.post('/api/claim', async (req, res) => {
       }
     });
 
-    console.log(`[Queue] Enqueued ${address} (IP ${ip}), position ${position}`);
+    console.log(`[Queue] Enqueued ${key} (IP ${ip}), position ${position}`);
 
   } catch (error: any) {
     console.error('Faucet Error:', error);
