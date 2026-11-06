@@ -14,6 +14,7 @@ import {
   getFaucetWallet,
   getFaucetBalance,
   parseDestination,
+  nodeAcceptsDestination,
   destinationKey,
   acceptedDestinations,
   canPaySilentPayments,
@@ -28,6 +29,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 const NETWORK = (process.env.NETWORK || 'testnet') as 'mainnet' | 'testnet';
+const NODE_REFUSED_ADDRESS = 'The Neurai node does not accept this address type yet.';
 
 // ── Security middleware ──────────────────────────────────────────
 app.use(cors({ origin: false }));
@@ -220,11 +222,16 @@ app.post('/api/connect/complete', async (req, res) => {
     // The signature is valid, but the chain of `iss` is not by itself a promise
     // that the faucet can pay this address: check the encoding it will send to.
     const { address } = outcome.login;
+    let destination: Destination;
     try {
-      if (parseDestination(address).kind !== 'address') throw new DestinationError('The wallet signed with an address this faucet cannot pay.');
+      destination = parseDestination(address);
+      if (destination.kind !== 'address') throw new DestinationError('The wallet signed with an address this faucet cannot pay.');
     } catch (error) {
       const message = error instanceof DestinationError ? error.message : 'The wallet signed with an address this faucet cannot pay.';
       return res.status(400).json({ error: { code: 'invalid_address', message } });
+    }
+    if (!(await nodeAcceptsDestination(destination))) {
+      return res.status(400).json({ error: { code: 'invalid_address', message: NODE_REFUSED_ADDRESS } });
     }
 
     const ticket = await issueConnectTicket(address, CONNECT_TICKET_TTL_SECONDS);
@@ -299,14 +306,20 @@ app.post('/api/claim', async (req, res) => {
       }
     }
 
-    // ── Gate 6: minimum balance ──
+    // ── Gate 6: the node accepts the address ──
+    // After the captcha, so an unverified request cannot make the faucet call the node.
+    if (!(await nodeAcceptsDestination(destination))) {
+      return res.status(400).json({ error: NODE_REFUSED_ADDRESS });
+    }
+
+    // ── Gate 7: minimum balance ──
     const balance = await getFaucetBalance();
     const amount = Number(process.env.FAUCET_AMOUNT || 100);
     if (balance < amount) {
       return res.status(503).json({ error: 'Faucet is empty. Please try again later.' });
     }
 
-    // ── Gate 7: per-IP / per-address rate limit (atomic, Redis) ──
+    // ── Gate 8: per-IP / per-address rate limit (atomic, Redis) ──
     const limitCheck = await checkRateLimit(ip, key, waitHours);
     if (limitCheck.limited) {
       return res.status(429).json({ error: limitCheck.message });

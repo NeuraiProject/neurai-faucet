@@ -1,6 +1,6 @@
 import NeuraiKey, { type IAddressObject, type IPQAddressObject } from '@neuraiproject/neurai-key';
 import { createPaymentTransaction, decodeAddress, encodeDestinationScript } from '@neuraiproject/neurai-create-transaction';
-import Signer, { estimateTransactionVbytes } from '@neuraiproject/neurai-sign-transaction';
+import Signer, { estimateInputVbytes, estimateOutputBytes, estimateTransactionVbytes } from '@neuraiproject/neurai-sign-transaction';
 import { getRPC, assertRpcGenesis, MAINNET_GENESIS_HASH, TESTNET_GENESIS_HASH } from '@neuraiproject/neurai-rpc';
 import { checkCode, createOutputs } from '@neuraiproject/neurai-silent-payments';
 import dotenv from 'dotenv';
@@ -17,6 +17,19 @@ const FAUCET_AMOUNT = Number(process.env.FAUCET_AMOUNT || 100);
 const COINBASE_MATURITY = Number(process.env.COINBASE_MATURITY || 10);
 // The node relays from 1,000 sat/vbyte; the fee is computed on the signed size.
 const FEE_RATE_SAT_PER_VBYTE = BigInt(process.env.FEE_RATE_SAT_PER_VBYTE || 2000);
+// The node's DUST_RELAY_TX_FEE.
+const DUST_RELAY_FEE_SATS_PER_KVB = 3000n;
+
+/**
+ * Smallest change the node relays to `address` (policy.cpp GetDustThreshold):
+ * the output plus the input that will spend it, at the dust relay fee. That is
+ * 546 sats for Legacy, 339 for ECDSA v3 and 3060 for PQ, whose spend carries a
+ * ~1 kvB witness.
+ */
+function getDustThreshold(address: string): bigint {
+  const vbytes = estimateOutputBytes(address) + estimateInputVbytes({ address });
+  return BigInt(Math.ceil(vbytes)) * DUST_RELAY_FEE_SATS_PER_KVB / 1000n;
+}
 
 type ChainNetwork = 'mainnet' | 'testnet';
 export type FaucetWalletType = 'legacy' | 'ecdsa' | 'pq';
@@ -145,6 +158,21 @@ function assertChain(): Promise<void> {
     throw new Error(`The RPC node is not on the expected ${NETWORK} chain (genesis ${EXPECTED_GENESIS}): ${error instanceof Error ? error.message : JSON.stringify(error)}`);
   });
   return chainChecked;
+}
+
+/**
+ * Whether the node itself accepts the address the faucet would pay. The node
+ * refuses the strict families before their activation height, so this catches
+ * an RPC node that does not run those rules yet. A silent payment is paid to
+ * a one-time ECDSA address derived at send time, the same family as the
+ * faucet's own wallet, so there is nothing to ask the node beforehand.
+ * An RPC failure throws: it is the faucet's problem, not the user's.
+ */
+export async function nodeAcceptsDestination(destination: Destination): Promise<boolean> {
+  if (destination.kind !== 'address') return true;
+  await assertChain();
+  const validation: any = await rpc('validateaddress', [destination.address]);
+  return validation?.isvalid === true;
 }
 
 /**
@@ -296,7 +324,12 @@ export const sendFaucetFunds = async (destination: Destination) => {
     throw new Error('Faucet has insufficient funds for this request.');
   }
 
-  const changeSats = selectedSats - amountSats - feeSats;
+  // Change below the dust threshold would get the transaction rejected, so it
+  // goes to the fee instead. The fee above already counts a change output, so
+  // dropping it only raises the effective rate.
+  const leftover = selectedSats - amountSats - feeSats;
+  const changeSats = leftover >= getDustThreshold(fromAddress) ? leftover : 0n;
+  feeSats = selectedSats - amountSats - changeSats;
   console.log(`Coin selection: ${inputs.length} inputs, fee=${feeSats} sat (${Number(feeSats)/1e8} XNA), change=${changeSats} sat`);
 
   // 3. Create final transaction with correct change
